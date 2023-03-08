@@ -1,0 +1,10 @@
+[package]
+name = "mimalloc-port"
+version = "0.1.0"
+edition = "2021"
+authors = ["Victor Porton"]
+repository = "git@github.com:vporton/mimalloc-rs.git"
+description = "Ongoing port of mimalloc to pure Rust with support of Internet Computer"
+
+[dependencies]
+ic-cdk = "0.8.0-beta.0"
