@@ -66,7 +66,6 @@ pub fn _mi_page_malloc(heap: TypedAddress<mi_heap_t>, page: TypedAddress<mi_page
     }
   }
 
-#if (MI_PADDING > 0) && defined(MI_ENCODE_FREELIST) && !MI_TRACK_ENABLED
   #[cfg(all(mi_padding, mi_encode_freelist, not(mi_track_enabled)))]
   {
 ///////////////////////////////////////////////////////////////////////////////////////////////
@@ -90,7 +89,6 @@ pub fn _mi_page_malloc(heap: TypedAddress<mi_heap_t>, page: TypedAddress<mi_page
       for (size_t i = 0; i < maxpad; i+ +) { fill[i] = MI_DEBUG_PADDING; }
     }
   }
-#endif
 
   return block;
 }
