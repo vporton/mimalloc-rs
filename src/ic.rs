@@ -1,8 +1,28 @@
+use std::marker::PhantomData;
 use std::mem::{MaybeUninit, size_of};
 use std::slice::{from_raw_parts, from_raw_parts_mut};
 use ic_cdk::api::stable::{StableMemory, StableMemoryError};
 
 pub struct Address(pub u64);
+
+trait Typed {
+    type Type;
+}
+
+pub struct TypedAddress<T>{
+    inner: u64,
+    phantom: PhantomData<T>,
+}
+
+impl<T> Typed for TypedAddress<T> {
+    type Type = T;
+}
+
+impl<T> From<TypedAddress<T>> for Address {
+    fn from(value: TypedAddress<T>) -> Self {
+        Address(value.inner)
+    }
+}
 
 pub const WASM_PAGE_SIZE_IN_BYTES: usize = 64 * 1024; // 64KB
 
@@ -13,15 +33,15 @@ pub trait Memory {
     fn write(&self, offset: Address, buf: &[u8]);
     fn read(&self, offset: Address, buf: &mut [u8]);
 
-    fn write_value<T>(&self, offset: Address, value: &T) {
-        self.write(offset, unsafe { from_raw_parts(value as *const T as *const _, size_of::<T>()) })
+    fn write_value<T>(&self, offset: TypedAddress<T>, value: &T) {
+        self.write(offset.into(), unsafe { from_raw_parts(value as *const T as *const _, size_of::<T>()) })
     }
-    fn read_value<T>(&self, offset: Address, value: *mut T) { // Creating a reference with &/&mut is only allowed if the pointer is properly aligned and points to initialized data.
-        self.read(offset, unsafe { from_raw_parts_mut(value as *mut _, size_of::<T>()) })
+    fn read_value<T>(&self, offset: TypedAddress<T>, value: *mut T) { // Creating a reference with &/&mut is only allowed if the pointer is properly aligned and points to initialized data.
+        self.read(offset.into(), unsafe { from_raw_parts_mut(value as *mut _, size_of::<T>()) })
     }
-    fn return_value<T>(&self, offset: Address) -> T {
+    fn return_value<T>(&self, offset: TypedAddress<T>) -> T {
         let mut x = MaybeUninit::<T>::uninit();
-        self.read_value(offset, &mut x);
+        self.read_value(offset, x.as_mut_ptr());
         unsafe { x.assume_init() }
     }
 }
@@ -46,33 +66,24 @@ impl Memory for dyn StableMemory {
     }
 }
 
-/// `write_field!(memory, address, C::f, value)`
+/// `write_field!(memory, address=>f, value)`
 macro_rules! write_field {
-    ($mem:expr,$addr:expr,$ty:ident::$field:ident,$value:expr) => {
-        $mem.write_value($addr + offset_of!($ty::$field).as_u32() as usize, $value)
-    };
-    ($mem:expr,$addr:expr,<$ty:path>::$field:ident,$value:expr) => {
-        $mem.write_value($addr + offset_of!(<$ty:path>::$field).as_u32() as usize, $value)
+    ($mem:expr,$addr:expr=>$field:ident,$value:expr) => {
+        $mem.write_value($addr + offset_of!(<$addr::Type>::$field).as_u32() as usize, $value)
     };
 }
 
-/// `read_field!(memory, address, C::f, pointer)`
+/// `read_field!(memory, address=>f, pointer)`
 macro_rules! read_field {
-    ($mem:expr,$addr:expr,$ty:ident::$field:ident,$pointer:expr) => {
-        $mem.read_value($addr + offset_of!($ty::$field).as_u32() as usize, $pointer)
-    };
-    ($mem:expr,$addr:expr,<$ty:path>::$field:ident,$pointer:expr) => {
-        $mem.read_value($addr + offset_of!(<$ty:path>::$field).as_u32() as usize, $pointer)
+    ($mem:expr,$addr:expr=>$field:ident,$pointer:expr) => {
+        $mem.read_value($addr + offset_of!(<$addr::Type>::$field).as_u32() as usize, $pointer)
     };
 }
 
-/// `return_field!(memory, address, C::f)`
+/// `return_field!(memory, address=>f)`
 macro_rules! return_field {
-    ($mem:expr,$addr:expr,$ty:ident::$field:ident) => {
-        $mem.return_value($addr + offset_of!($ty::$field).as_u32() as usize)
-    };
-    ($mem:expr,$addr:expr,<$ty:path>::$field:ident) => {
-        $mem.return_value($addr + offset_of!(<$ty:path>::$field).as_u32() as usize)
+    ($mem:expr,$addr:expr=>$field:ident) => {
+        $mem.return_value($addr + offset_of!(<$addr::Type>::$field).as_u32() as usize)
     };
 }
 
