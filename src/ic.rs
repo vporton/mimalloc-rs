@@ -3,12 +3,14 @@ use std::mem::{MaybeUninit, size_of};
 use std::slice::{from_raw_parts, from_raw_parts_mut};
 use ic_cdk::api::stable::{StableMemory, StableMemoryError};
 
+#[derive(Clone, Copy)]
 pub struct Address(pub u64);
 
 trait Typed {
     type Type;
 }
 
+#[derive(Clone, Copy)]
 pub struct TypedAddress<T>{
     inner: u64,
     phantom: PhantomData<T>,
@@ -44,6 +46,12 @@ pub trait Memory {
         self.read_value(offset, x.as_mut_ptr());
         unsafe { x.assume_init() }
     }
+    fn update_value<T, F>(&self, offset: TypedAddress<T>, update: F)
+        where F: FnOnce(T) -> T
+    {
+        let old = self.return_value(offset);
+        self.write_value(offset, &update(old));
+    }
 }
 
 impl Memory for dyn StableMemory {
@@ -66,27 +74,35 @@ impl Memory for dyn StableMemory {
     }
 }
 
-/// `write_field!(memory, address=>f, value)`
+/// `write_field!(memory, address=>field, value)`
 macro_rules! write_field {
     ($mem:expr,$addr:expr=>$field:ident,$value:expr) => {
         $mem.write_value($addr + offset_of!(<$addr::Type>::$field).as_u32() as usize, $value)
     };
 }
 
-/// `read_field!(memory, address=>f, pointer)`
+/// `read_field!(memory, address=>field, pointer)`
 macro_rules! read_field {
     ($mem:expr,$addr:expr=>$field:ident,$pointer:expr) => {
         $mem.read_value($addr + offset_of!(<$addr::Type>::$field).as_u32() as usize, $pointer)
     };
 }
 
-/// `return_field!(memory, address=>f)`
+/// `return_field!(memory, address=>field)`
 macro_rules! return_field {
     ($mem:expr,$addr:expr=>$field:ident) => {
         $mem.return_value($addr + offset_of!(<$addr::Type>::$field).as_u32() as usize)
     };
 }
 
+/// `update_field!(memory, address=>field, update)`
+macro_rules! update_field {
+    ($mem:expr,$addr:expr=>$field:ident,$update:expr) => {
+        $mem.update_value($addr + offset_of!(<$addr::Type>::$field).as_u32() as usize, update)
+    };
+}
+
 pub(crate) use write_field;
 pub(crate) use read_field;
 pub(crate) use return_field;
+pub(crate) use update_field;
