@@ -4,39 +4,28 @@ This is free software; you can redistribute it and/or modify it under the
 terms of the MIT license. A copy of the license can be found in the file
 "LICENSE" at the root of this distribution.
 -----------------------------------------------------------------------------*/
-#ifndef _DEFAULT_SOURCE
-#define _DEFAULT_SOURCE   // for realpath() on Linux
-#endif
-
-#include "mimalloc.h"
-#include "mimalloc-internal.h"
-#include "mimalloc-atomic.h"
-
-
-#include <string.h>  // memset, strlen
-#include <stdlib.h>  // malloc, exit
-
-#define MI_IN_ALLOC_C
-#include "alloc-override.c"
-#undef MI_IN_ALLOC_C
 
 // ------------------------------------------------------
 // Allocation
 // ------------------------------------------------------
 
+use std::mem::size_of;
+
 // Fast allocation in a page: just pop from the free list.
 // Fall back to generic allocation only if the list is empty.
-extern inline void* _mi_page_malloc(mi_heap_t* heap, mi_page_t* page, size_t size, bool zero) mi_attr_noexcept {
-  mi_assert_internal(page->xblock_size==0||mi_page_block_size(page) >= size);
-  mi_block_t* const block = page->free;
-  if mi_unlikely(block == NULL) {
+#[inline]
+pub fn _mi_page_malloc(heap: TypedAddress<mi_heap_t>, page: TypedAddress<mi_page_t>, size: usize, zero: bool) -> Address {
+  mi_assert_internal!(return_field!(memory, page=>xblock_size)==0||mi_page_block_size(page) >= size);
+  let block = return_field!(memory, page=>free);
+  if mi_unlikely(block == null) {
     return _mi_malloc_generic(heap, size, zero, 0);
   }
-  mi_assert_internal(block != NULL && _mi_ptr_page(block) == page);
+  mi_assert_internal!(block != null && _mi_ptr_page(block) == page);
   // pop from the free list
-  page->used++;
-  page->free = mi_block_next(page, block);
-  mi_assert_internal(page->free == NULL || _mi_ptr_page(page->free) == page);
+  update_field!(memory, page=>used, |x| x+1);
+  let free = mi_block_next(page, block);
+  write_field!(memory, page=>free, free);
+  mi_assert_internal(free == null || _mi_ptr_page(free) == page);
 
   // allow use of the block internally
   // note: when tracking we need to avoid ever touching the MI_PADDING since
@@ -45,44 +34,61 @@ extern inline void* _mi_page_malloc(mi_heap_t* heap, mi_page_t* page, size_t siz
 
   // zero the block? note: we need to zero the full block size (issue #63)
   if mi_unlikely(zero) {
-    mi_assert_internal(page->xblock_size != 0); // do not call with zero'ing for huge blocks (see _mi_malloc_generic)
-    const size_t zsize = (page->is_zero ? sizeof(block->next) + MI_PADDING_SIZE : page->xblock_size);
+    mi_assert_internal!(return_field!(memory, page=>xblock_size) != 0); // do not call with zero'ing for huge blocks (see _mi_malloc_generic)
+    let zsize: usize = if return_field!(memory, page=>is_zero) {
+      size_of::<mi_block_t::mi_encoded_t>() + MI_PADDING_SIZE
+    } else {
+      return_field!(memory, page=>xblock_size)
+    };
     _mi_memzero_aligned(block, zsize - MI_PADDING_SIZE);
   }
-
-#if (MI_DEBUG>0) && !MI_TRACK_ENABLED
-  if (!page->is_zero && !zero && !mi_page_is_huge(page)) {
-    memset(block, MI_DEBUG_UNINIT, mi_page_usable_block_size(page));
+  // TODO: Can we use the previous `return_field!(memory, page=>is_zero)` result?
+  #[cfg(all(mi_debug, not(mi_track_enabled)))]
+  if !return_field!(memory, page=>is_zero) && !zero && !mi_page_is_huge(page) {
+    for i in .. mi_page_usable_block_size(page) {
+      memory.write_value(block.offset(i), MI_DEBUG_UNINIT); // TODO: inefficient?
+    }
   }
-#elif (MI_SECURE!=0)
-  if (!zero) { block->next = 0; } // don't leak internal data
-#endif
+  #[cfg(mi_secure)]
+  if !zero { write_field!(memory, block=>next, null); } // don't leak internal data
 
-#if (MI_STAT>0)
-  const size_t bsize = mi_page_usable_block_size(page);
-  if (bsize <= MI_MEDIUM_OBJ_SIZE_MAX) {
-    mi_heap_stat_increase(heap, normal, bsize);
-    mi_heap_stat_counter_increase(heap, normal_count, 1);
-#if (MI_STAT>1)
-    const size_t bin = _mi_bin(bsize);
-    mi_heap_stat_increase(heap, normal_bins[bin], 1);
-#endif
+  #[cfg(mi_stat)]
+  {
+    let bsize: usize = mi_page_usable_block_size(page);
+    if bsize <= MI_MEDIUM_OBJ_SIZE_MAX {
+      mi_heap_stat_increase(heap, normal, bsize);
+      mi_heap_stat_counter_increase(heap, normal_count, 1);
+      #[cfg(mi_stat_2)]
+      {
+        let bin: usize = _mi_bin(bsize);
+        mi_heap_stat_increase(heap, normal_bins[bin], 1);
+      }
+    }
   }
-#endif
 
 #if (MI_PADDING > 0) && defined(MI_ENCODE_FREELIST) && !MI_TRACK_ENABLED
-  mi_padding_t* const padding = (mi_padding_t*)((uint8_t*)block + mi_page_usable_block_size(page));
-  ptrdiff_t delta = ((uint8_t*)padding - (uint8_t*)block - (size - MI_PADDING_SIZE));
-  #if (MI_DEBUG>1)
-  mi_assert_internal(delta >= 0 && mi_page_usable_block_size(page) >= (size - MI_PADDING_SIZE + delta));
-  mi_track_mem_defined(padding,sizeof(mi_padding_t));  // note: re-enable since mi_page_usable_block_size may set noaccess
-  #endif
-  padding->canary = (uint32_t)(mi_ptr_encode(page,block,page->keys));
-  padding->delta  = (uint32_t)(delta);
-  if (!mi_page_is_huge(page)) {
-    uint8_t* fill = (uint8_t*)padding - delta;
-    const size_t maxpad = (delta > MI_MAX_ALIGN_SIZE ? MI_MAX_ALIGN_SIZE : delta); // set at most N initial padding bytes
-    for (size_t i = 0; i < maxpad; i++) { fill[i] = MI_DEBUG_PADDING; }
+  #[cfg(all(mi_padding, mi_encode_freelist, not(mi_track_enabled)))]
+  {
+///////////////////////////////////////////////////////////////////////////////////////////////
+    mi_padding_t * const padding = (mi_padding_t *)((uint8_t *)block + mi_page_usable_block_size(page));
+    ptrdiff_t
+    delta = ((uint8_t *)
+    padding - (uint8_t *)
+    block - (size - MI_PADDING_SIZE));
+    # if (MI_DEBUG > 1)
+    mi_assert_internal(delta >= 0 && mi_page_usable_block_size(page) >= (size - MI_PADDING_SIZE + delta));
+    mi_track_mem_defined(padding, sizeof(mi_padding_t));  // note: re-enable since mi_page_usable_block_size may set noaccess
+    # endif
+    padding -> canary = (uint32_t)(mi_ptr_encode(page, block, page->keys));
+    padding -> delta = (uint32_t)(delta);
+    if (!mi_page_is_huge(page)) {
+      uint8_t * fill = (uint8_t *)
+      padding - delta;
+      const size_t
+      maxpad = (delta > MI_MAX_ALIGN_SIZE?
+      MI_MAX_ALIGN_SIZE: delta); // set at most N initial padding bytes
+      for (size_t i = 0; i < maxpad; i+ +) { fill[i] = MI_DEBUG_PADDING; }
+    }
   }
 #endif
 

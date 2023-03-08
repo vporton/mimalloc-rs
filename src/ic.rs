@@ -15,6 +15,18 @@ pub struct TypedAddress<T>{
     phantom: PhantomData<T>,
 }
 
+impl<T> TypedAddress<T> {
+    pub fn from_address(addr: u64) -> Self {
+        Self {
+            inner: addr,
+            phantom: PhantomData,
+        }
+    }
+    pub fn offset(&self, offset: isize) {
+        from_address((self.inner as isize + offset) as u64)
+    }
+}
+
 impl<T> Clone for TypedAddress<T> {
     fn clone(&self) -> Self {
         *self
