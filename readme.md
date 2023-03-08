@@ -1,3 +1,32 @@
+In this fork, going to port mimalloc to pure Rust.
+
+```
+#if MI_PADDING
+...
+#endif
+```
+or
+```
+#if defined(MI_PADDING)
+...
+#endif
+```
+maps to
+```
+#[cfg(mi_padding)]
+```
+
+```
+#if MI_PADDING > 2
+...
+#endif
+```
+maps to
+```
+#[cfg(mi_padding_3)]
+```
+
+---
 
 <img align="left" width="100" height="100" src="doc/mimalloc-logo.png"/>
 
