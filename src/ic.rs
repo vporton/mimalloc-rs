@@ -49,20 +49,20 @@ impl Memory for dyn StableMemory {
 /// `write_field!(memory, address, C::f, value)`
 macro_rules! write_field {
     ($mem:expr,$addr:expr,$ty:ident::$field:ident,$value:expr) => {
-        $mem.write_value(($addr) + offset_of!($ty::$field).as_u32() as usize, $value)
+        $mem.write_value($addr + offset_of!($ty::$field).as_u32() as usize, $value)
     };
     ($mem:expr,$addr:expr,<$ty:path>::$field:ident,$value:expr) => {
-        $mem.write_value(($addr) + offset_of!(<$ty:path>::$field).as_u32() as usize, $value)
+        $mem.write_value($addr + offset_of!(<$ty:path>::$field).as_u32() as usize, $value)
     };
 }
 
 /// `read_field!(memory, address, C::f, pointer)`
 macro_rules! read_field {
     ($mem:expr,$addr:expr,$ty:ident::$field:ident,$pointer:expr) => {
-        $mem.read_value(($addr) + offset_of!($ty::$field).as_u32() as usize, $pointer)
+        $mem.read_value($addr + offset_of!($ty::$field).as_u32() as usize, $pointer)
     };
     ($mem:expr,$addr:expr,<$ty:path>::$field:ident,$pointer:expr) => {
-        $mem.read_value(($addr) + offset_of!(<$ty:path>::$field).as_u32() as usize, $pointer)
+        $mem.read_value($addr + offset_of!(<$ty:path>::$field).as_u32() as usize, $pointer)
     };
 }
 
