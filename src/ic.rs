@@ -10,11 +10,17 @@ trait Typed {
     type Type;
 }
 
-#[derive(Clone, Copy)]
 pub struct TypedAddress<T>{
     inner: u64,
     phantom: PhantomData<T>,
 }
+
+impl<T> Clone for TypedAddress<T> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl<T> Copy for TypedAddress<T> {}
 
 impl<T> Typed for TypedAddress<T> {
     type Type = T;
@@ -28,17 +34,30 @@ impl<T> From<TypedAddress<T>> for Address {
 
 pub const WASM_PAGE_SIZE_IN_BYTES: usize = 64 * 1024; // 64KB
 
-pub trait Memory {
+pub trait PagedMemory {
     const PAGE_SIZE_IN_BYTES: usize;
+}
+
+pub trait Memory {
     fn size_in_pages(&self) -> u64;
     fn grow(&self, new_pages: u64) -> Result<u64, StableMemoryError>;
     fn write(&self, offset: Address, buf: &[u8]);
     fn read(&self, offset: Address, buf: &mut [u8]);
+}
 
+pub trait MemoryExt: Memory {
+    fn write_value<T>(&self, offset: TypedAddress<T>, value: &T);
+    fn read_value<T>(&self, offset: TypedAddress<T>, value: *mut T); // Creating a reference with &/&mut is only allowed if the pointer is properly aligned and points to initialized data.
+    fn return_value<T>(&self, offset: TypedAddress<T>) -> T;
+    fn update_value<T, F>(&self, offset: TypedAddress<T>, update: F)
+        where F: FnOnce(T) -> T;
+}
+
+impl MemoryExt for dyn Memory {
     fn write_value<T>(&self, offset: TypedAddress<T>, value: &T) {
         self.write(offset.into(), unsafe { from_raw_parts(value as *const T as *const _, size_of::<T>()) })
     }
-    fn read_value<T>(&self, offset: TypedAddress<T>, value: *mut T) { // Creating a reference with &/&mut is only allowed if the pointer is properly aligned and points to initialized data.
+    fn read_value<T>(&self, offset: TypedAddress<T>, value: *mut T) {
         self.read(offset.into(), unsafe { from_raw_parts_mut(value as *mut _, size_of::<T>()) })
     }
     fn return_value<T>(&self, offset: TypedAddress<T>) -> T {
@@ -55,8 +74,6 @@ pub trait Memory {
 }
 
 impl Memory for dyn StableMemory {
-    const PAGE_SIZE_IN_BYTES: usize = WASM_PAGE_SIZE_IN_BYTES;
-
     fn size_in_pages(&self) -> u64 {
         <Self as StableMemory>::stable64_size(self)
     }
@@ -72,6 +89,10 @@ impl Memory for dyn StableMemory {
     fn read(&self, offset: Address, buf: &mut [u8]) {
         <Self as StableMemory>::stable64_read(self, offset.0, buf)
     }
+}
+
+impl PagedMemory for dyn StableMemory {
+    const PAGE_SIZE_IN_BYTES: usize = WASM_PAGE_SIZE_IN_BYTES;
 }
 
 /// `write_field!(memory, address=>field, value)`
