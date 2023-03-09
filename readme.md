@@ -1,5 +1,8 @@
 In this fork, going to port mimalloc to pure Rust.
 
+Based on commit [dd73480](https://github.com/microsoft/mimalloc/commit/dd7348066fe40e8bf372fa4e9538910a5e24a75f)
+of mimalloc.
+
 ```
 #if MI_PADDING
 ...
