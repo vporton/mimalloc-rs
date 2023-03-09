@@ -1,5 +1,7 @@
 use ic_cdk::api::stable::{StableMemory};
-use crate::memory::{Address, AllocationError, Memory, PagedMemory, WASM_PAGE_SIZE_IN_BYTES};
+use crate::memory::{Address, AllocationError, Memory, PagedMemory};
+
+pub const WASM_PAGE_SIZE_IN_BYTES: usize = 64 * 1024; // 64KB
 
 impl Memory for dyn StableMemory {
     fn size_in_pages(&self) -> u64 {

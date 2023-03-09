@@ -30,6 +30,9 @@ impl<T> TypedAddress<T> {
     pub fn offset(&self, offset: isize) -> Self {
         Self::from_address((self.inner as isize + offset) as u64)
     }
+    pub fn byte_address(&self) -> Address {
+        Address(self.inner)
+    }
 }
 
 impl<T> Clone for TypedAddress<T> {
@@ -42,14 +45,6 @@ impl<T> Copy for TypedAddress<T> {}
 impl<T> Typed for TypedAddress<T> {
     type Type = T;
 }
-
-impl<T> From<TypedAddress<T>> for Address {
-    fn from(value: TypedAddress<T>) -> Self {
-        Address(value.inner)
-    }
-}
-
-pub const WASM_PAGE_SIZE_IN_BYTES: usize = 64 * 1024; // 64KB
 
 pub trait PagedMemory {
     const PAGE_SIZE_IN_BYTES: usize;
@@ -72,10 +67,10 @@ pub trait MemoryExt: Memory {
 
 impl MemoryExt for dyn Memory {
     fn write_value<T>(&self, offset: TypedAddress<T>, value: &T) {
-        self.write(offset.into(), unsafe { from_raw_parts(value as *const T as *const _, size_of::<T>()) })
+        self.write(offset.byte_address(), unsafe { from_raw_parts(value as *const T as *const _, size_of::<T>()) })
     }
     fn read_value<T>(&self, offset: TypedAddress<T>, value: *mut T) {
-        self.read(offset.into(), unsafe { from_raw_parts_mut(value as *mut _, size_of::<T>()) })
+        self.read(offset.byte_address(), unsafe { from_raw_parts_mut(value as *mut _, size_of::<T>()) })
     }
     fn return_value<T>(&self, offset: TypedAddress<T>) -> T {
         let mut x = MaybeUninit::<T>::uninit();
@@ -86,7 +81,8 @@ impl MemoryExt for dyn Memory {
         where F: FnOnce(T) -> T
     {
         let old = self.return_value(offset);
-        self.write_value(offset, &update(old));
+        let new = update(old);
+        self.write_value(offset, &new);
     }
 }
 
