@@ -14,7 +14,7 @@ use std::mem::size_of;
 // Fast allocation in a page: just pop from the free list.
 // Fall back to generic allocation only if the list is empty.
 #[inline]
-pub fn _mi_page_malloc(heap: TypedAddress<mi_heap_t>, page: TypedAddress<mi_page_t>, size: usize, zero: bool) -> Address {
+pub fn _mi_page_malloc(heap: TypedAddress<mi_heap_t>, page: TypedAddress<mi_page_t>, size: u64, zero: bool) -> Address {
   mi_assert_internal!(return_field!(memory, page=>xblock_size)==0||mi_page_block_size(page) >= size);
   let block = return_field!(memory, page=>free);
   if mi_unlikely(block == null) {
@@ -35,7 +35,7 @@ pub fn _mi_page_malloc(heap: TypedAddress<mi_heap_t>, page: TypedAddress<mi_page
   // zero the block? note: we need to zero the full block size (issue #63)
   if mi_unlikely(zero) {
     mi_assert_internal!(return_field!(memory, page=>xblock_size) != 0); // do not call with zero'ing for huge blocks (see _mi_malloc_generic)
-    let zsize: usize = if return_field!(memory, page=>is_zero) {
+    let zsize: u64 = if return_field!(memory, page=>is_zero) {
       size_of::<mi_block_t::mi_encoded_t>() + MI_PADDING_SIZE
     } else {
       return_field!(memory, page=>xblock_size)
@@ -54,13 +54,13 @@ pub fn _mi_page_malloc(heap: TypedAddress<mi_heap_t>, page: TypedAddress<mi_page
 
   #[cfg(mi_stat)]
   {
-    let bsize: usize = mi_page_usable_block_size(page);
+    let bsize: u64 = mi_page_usable_block_size(page);
     if bsize <= MI_MEDIUM_OBJ_SIZE_MAX {
       mi_heap_stat_increase(heap, normal, bsize);
       mi_heap_stat_counter_increase(heap, normal_count, 1);
       #[cfg(mi_stat_2)]
       {
-        let bin: usize = _mi_bin(bsize);
+        let bin: u64 = _mi_bin(bsize);
         mi_heap_stat_increase(heap, normal_bins[bin], 1);
       }
     }
@@ -68,110 +68,117 @@ pub fn _mi_page_malloc(heap: TypedAddress<mi_heap_t>, page: TypedAddress<mi_page
 
   #[cfg(all(mi_padding, mi_encode_freelist, not(mi_track_enabled)))]
   {
-///////////////////////////////////////////////////////////////////////////////////////////////
-    mi_padding_t * const padding = (mi_padding_t *)((uint8_t *)block + mi_page_usable_block_size(page));
-    ptrdiff_t
-    delta = ((uint8_t *)
-    padding - (uint8_t *)
-    block - (size - MI_PADDING_SIZE));
-    # if (MI_DEBUG > 1)
-    mi_assert_internal(delta >= 0 && mi_page_usable_block_size(page) >= (size - MI_PADDING_SIZE + delta));
-    mi_track_mem_defined(padding, sizeof(mi_padding_t));  // note: re-enable since mi_page_usable_block_size may set noaccess
-    # endif
-    padding -> canary = (uint32_t)(mi_ptr_encode(page, block, page->keys));
-    padding -> delta = (uint32_t)(delta);
-    if (!mi_page_is_huge(page)) {
-      uint8_t * fill = (uint8_t *)
-      padding - delta;
-      const size_t
-      maxpad = (delta > MI_MAX_ALIGN_SIZE?
-      MI_MAX_ALIGN_SIZE: delta); // set at most N initial padding bytes
-      for (size_t i = 0; i < maxpad; i+ +) { fill[i] = MI_DEBUG_PADDING; }
+    let padding = TypedAddress::<mi_padding_t>::from_address(block.byte_address().0 + mi_page_usable_block_size(page));
+    let delta: i64 = padding.byte_address().0 - block.byte_address().0 - (size - MI_PADDING_SIZE);
+    #[cfg(mi_debug_2)]
+    {
+      mi_assert_internal!(delta >= 0 && mi_page_usable_block_size(page) >= (size - MI_PADDING_SIZE + delta));
+      mi_track_mem_defined(padding, mi_padding_t::size_of());  // note: re-enable since mi_page_usable_block_size may set noaccess
+    }
+    write_value!(memory, padding=>canary, mi_ptr_encode(page, block, return_value!(memory, page=>keys)) as u32);
+    write_value!(memory, padding=>delta, delta as u32);
+    if !mi_page_is_huge(page) {
+      let fill: Address = padding.byte_address().0 as i64 - delta;
+      let maxpad: u64 = min(delta, MI_MAX_ALIGN_SIZE); // set at most N initial padding bytes
+      for i in 0 .. maxpad {
+        memory.write(fill.offset(i), &[MI_DEBUG_PADDING]); // TODO: may be slow
+      }
     }
   }
 
-  return block;
+  block
 }
 
-static inline mi_decl_restrict void* mi_heap_malloc_small_zero(mi_heap_t* heap, size_t size, bool zero) mi_attr_noexcept {
-  mi_assert(heap != NULL);
-  #if MI_DEBUG
-  const uintptr_t tid = _mi_thread_id();
-  mi_assert(heap->thread_id == 0 || heap->thread_id == tid); // heaps are thread local
-  #endif
-  mi_assert(size <= MI_SMALL_SIZE_MAX);
-#if (MI_PADDING)
-  if (size == 0) {
-    size = sizeof(void*);
+#[inline]
+fn mi_heap_malloc_small_zero(heap: TypedAddress<mi_heap_t>, size: u64, zero: bool) -> Address {
+  mi_assert!(heap != null);
+  #[cfg(mi_debug)]
+  {
+    let tid: u64 = _mi_thread_id();
+    let our_tid = return_value!(memory, heap=>thread_id);
+    mi_assert(our_tid == 0 || our_tid == tid); // heaps are thread local
   }
-#endif
-  mi_page_t* page = _mi_heap_get_free_small_page(heap, size + MI_PADDING_SIZE);
-  void* p = _mi_page_malloc(heap, page, size + MI_PADDING_SIZE, zero);
-  mi_assert_internal(p == NULL || mi_usable_size(p) >= size);
-#if MI_STAT>1
-  if (p != NULL) {
-    if (!mi_heap_is_initialized(heap)) { heap = mi_get_default_heap(); }
+  mi_assert!(size <= MI_SMALL_SIZE_MAX);
+  #[cfg(mi_padding)]
+  if size == 0 {
+    size = u64::size_of();
+  }
+  let page: TypedAddress<mi_page_t> = _mi_heap_get_free_small_page(heap, size + MI_PADDING_SIZE);
+  let p: Address = _mi_page_malloc(heap, page, size + MI_PADDING_SIZE, zero);
+  mi_assert_internal!(p == null || mi_usable_size(p) >= size);
+  #[cfg(mi_stat_2)]
+  if p != null {
+    if !mi_heap_is_initialized(heap) {
+      heap = mi_get_default_heap();
+    }
     mi_heap_stat_increase(heap, malloc, mi_usable_size(p));
   }
-#endif
-  mi_track_malloc(p,size,zero);
-  return p;
+  mi_track_malloc(p, size, zero);
+  p
 }
 
 // allocate a small block
-mi_decl_nodiscard extern inline mi_decl_restrict void* mi_heap_malloc_small(mi_heap_t* heap, size_t size) mi_attr_noexcept {
-  return mi_heap_malloc_small_zero(heap, size, false);
+#[inline]
+fn mi_heap_malloc_small(heap: TypedAddress<mi_heap_t>, size: u64) -> Address {
+  mi_heap_malloc_small_zero(heap, size, false)
 }
 
-mi_decl_nodiscard extern inline mi_decl_restrict void* mi_malloc_small(size_t size) mi_attr_noexcept {
-  return mi_heap_malloc_small(mi_get_default_heap(), size);
+#[inline]
+fn mi_malloc_small(size: u64) -> Address {
+  mi_heap_malloc_small(mi_get_default_heap(), size)
 }
 
 // The main allocation function
-extern inline void* _mi_heap_malloc_zero_ex(mi_heap_t* heap, size_t size, bool zero, size_t huge_alignment) mi_attr_noexcept {
+#[inline]
+fn _mi_heap_malloc_zero_ex(heap: TypedAddress<mi_heap_t>, size: u64, zero: bool, huge_alignment: u64) -> Address {
   if mi_likely(size <= MI_SMALL_SIZE_MAX) {
-    mi_assert_internal(huge_alignment == 0);
+    mi_assert_internal!(huge_alignment == 0);
     return mi_heap_malloc_small_zero(heap, size, zero);
-  }
-  else {
-    mi_assert(heap!=NULL);
-    mi_assert(heap->thread_id == 0 || heap->thread_id == _mi_thread_id());   // heaps are thread local
-    void* const p = _mi_malloc_generic(heap, size + MI_PADDING_SIZE, zero, huge_alignment);  // note: size can overflow but it is detected in malloc_generic
-    mi_assert_internal(p == NULL || mi_usable_size(p) >= size);
-    #if MI_STAT>1
-    if (p != NULL) {
-      if (!mi_heap_is_initialized(heap)) { heap = mi_get_default_heap(); }
+  } else {
+    mi_assert!(heap!=null);
+    let thread_id = return_value!(memory, heap=>thread_id);
+    mi_assert(thread_id == 0 || thread_id == _mi_thread_id());   // heaps are thread local
+    let p: Address = _mi_malloc_generic(heap, size + MI_PADDING_SIZE, zero, huge_alignment);  // note: size can overflow but it is detected in malloc_generic
+    mi_assert_internal!(p == null || mi_usable_size(p) >= size);
+    #[cfg(mi_stat_2)]
+    if p != null {
+      if !mi_heap_is_initialized(heap) {
+        heap = mi_get_default_heap();
+      }
       mi_heap_stat_increase(heap, malloc, mi_usable_size(p));
     }
-    #endif
-    mi_track_malloc(p,size,zero);
-    return p;
+    mi_track_malloc(p, size, zero);
+    p
   }
 }
 
-extern inline void* _mi_heap_malloc_zero(mi_heap_t* heap, size_t size, bool zero) mi_attr_noexcept {
-  return _mi_heap_malloc_zero_ex(heap, size, zero, 0);
+#[inline]
+fn _mi_heap_malloc_zero(heap: TypedAddress<mi_heap_t>, size: u64, zero: bool) -> Address {
+  _mi_heap_malloc_zero_ex(heap, size, zero, 0)
 }
 
-mi_decl_nodiscard extern inline mi_decl_restrict void* mi_heap_malloc(mi_heap_t* heap, size_t size) mi_attr_noexcept {
-  return _mi_heap_malloc_zero(heap, size, false);
+#[inline]
+fn mi_heap_malloc(heap: TypedAddress<mi_heap_t>, size: u64) -> Address {
+  _mi_heap_malloc_zero(heap, size, false)
 }
 
-mi_decl_nodiscard extern inline mi_decl_restrict void* mi_malloc(size_t size) mi_attr_noexcept {
-  return mi_heap_malloc(mi_get_default_heap(), size);
+#[inline]
+fn mi_malloc(size: u64) -> Address {
+  mi_heap_malloc(mi_get_default_heap(), size)
 }
 
 // zero initialized small block
-mi_decl_nodiscard mi_decl_restrict void* mi_zalloc_small(size_t size) mi_attr_noexcept {
-  return mi_heap_malloc_small_zero(mi_get_default_heap(), size, true);
+fn mi_zalloc_small(size: u64) -> Address {
+  mi_heap_malloc_small_zero(mi_get_default_heap(), size, true)
 }
 
-mi_decl_nodiscard extern inline mi_decl_restrict void* mi_heap_zalloc(mi_heap_t* heap, size_t size) mi_attr_noexcept {
+#[inline]
+fn mi_heap_zalloc(heap: ZTypedAddress<mi_heap_t>, size: u64) -> Address {
   return _mi_heap_malloc_zero(heap, size, true);
 }
 
-mi_decl_nodiscard mi_decl_restrict void* mi_zalloc(size_t size) mi_attr_noexcept {
-  return mi_heap_zalloc(mi_get_default_heap(),size);
+fn mi_zalloc(size: u64) -> Address {
+  return mi_heap_zalloc(mi_get_default_heap(), size);
 }
 
 
@@ -180,57 +187,75 @@ mi_decl_nodiscard mi_decl_restrict void* mi_zalloc(size_t size) mi_attr_noexcept
 // This is somewhat expensive so only enabled for secure mode 4
 // ------------------------------------------------------
 
-#if (MI_ENCODE_FREELIST && (MI_SECURE>=4 || MI_DEBUG!=0))
 // linear check if the free list contains a specific element
-static bool mi_list_contains(const mi_page_t* page, const mi_block_t* list, const mi_block_t* elem) {
-  while (list != NULL) {
-    if (elem==list) return true;
+#[cfg(all(mi_encode_freelist, any(mi_secure_5, mi_debug)))]
+fn mi_list_contains(page: TypedAddress<mi_page_t>, list: TypedAddress<mi_block_t>, elem: TypedAddress<mi_block_t>) -> bool {
+  while list != null {
+    if elem==list {
+      return true;
+    }
     list = mi_block_next(page, list);
   }
-  return false;
+  false
 }
 
-static mi_decl_noinline bool mi_check_is_double_freex(const mi_page_t* page, const mi_block_t* block) {
+#[cfg(all(mi_encode_freelist, any(mi_secure_5, mi_debug)))]
+fn mi_check_is_double_freex(page: TypedAddress<mi_page_t>, block: TypedAddress<mi_block_t>) -> bool {
   // The decoded value is in the same page (or NULL).
   // Walk the free lists to verify positively if it is already freed
-  if (mi_list_contains(page, page->free, block) ||
-      mi_list_contains(page, page->local_free, block) ||
-      mi_list_contains(page, mi_page_thread_free(page), block))
+  if mi_list_contains(page, return_value!(memory, page=>free), block) ||
+      mi_list_contains(page, return_value!(memory, page=>local_free), block) ||
+      mi_list_contains(page, mi_page_thread_free(page), block)
   {
     _mi_error_message(EAGAIN, "double free detected of block %p with size %zu\n", block, mi_page_block_size(page));
     return true;
   }
-  return false;
+  false
 }
 
-#define mi_track_page(page,access)  { size_t psize; void* pstart = _mi_page_start(_mi_page_segment(page),page,&psize); mi_track_mem_##access( pstart, psize); }
+#[cfg(all(mi_encode_freelist, any(mi_secure_5, mi_debug)))]
+// #[macro_export] // FIXME: needed?
+macro_rules! mi_track_page {
+  ($page:expr,$access:ident) => {
+    {
+      let mut psize: u64;
+      let pstart: Address = _mi_page_start(_mi_page_segment(page), page, &psize);
+      concat_idents!(mi_track_mem_, access)(pstart, psize);
+    }
+  }
+}
 
-static inline bool mi_check_is_double_free(const mi_page_t* page, const mi_block_t* block) {
-  bool is_double_free = false;
-  mi_block_t* n = mi_block_nextx(page, block, page->keys); // pretend it is freed, and get the decoded first field
-  if (((uintptr_t)n & (MI_INTPTR_SIZE-1))==0 &&  // quick check: aligned pointer?
-      (n==NULL || mi_is_in_same_page(block, n))) // quick check: in same page or NULL?
+#[cfg(all(mi_encode_freelist, any(mi_secure_5, mi_debug)))]
+#[inline]
+fn mi_check_is_double_free(page: TypedAddress<mi_page_t>, block: TypedAddress<mi_block_t>) -> bool {
+  let mut is_double_free = false;
+  let n: TypedAddress<mi_block_t> =  = mi_block_nextx(page, block, return_value!(memory, page=>keys)); // pretend it is freed, and get the decoded first field
+  if ((n as u64 & (MI_INTPTR_SIZE-1)) == 0 &&  // quick check: aligned pointer?
+      (n==null || mi_is_in_same_page(block, n))) // quick check: in same page or NULL?
   {
     // Suspicous: decoded value a in block is in the same page (or NULL) -- maybe a double free?
     // (continue in separate function to improve code generation)
     is_double_free = mi_check_is_double_freex(page, block);
   }
-  return is_double_free;
+  is_double_free
 }
-#else
-static inline bool mi_check_is_double_free(const mi_page_t* page, const mi_block_t* block) {
+
+#[cfg(not(all(mi_encode_freelist, any(mi_secure_5, mi_debug))))]
+#[inline]
+fn mi_check_is_double_free(page: TypedAddress<mi_page_t>, block: TypedAddress<mi_block_t>) -> bool {
   MI_UNUSED(page);
   MI_UNUSED(block);
-  return false;
+  false
 }
-#endif
 
 // ---------------------------------------------------------------------------
 // Check for heap block overflow by setting up padding at the end of the block
 // ---------------------------------------------------------------------------
 
+///////////////////////////////////////////////////////////////////////////////////////////////
+
 #if (MI_PADDING>0) && defined(MI_ENCODE_FREELIST) && !MI_TRACK_ENABLED
-static bool mi_page_decode_padding(const mi_page_t* page, const mi_block_t* block, size_t* delta, size_t* bsize) {
+fn mi_page_decode_padding(page: TypedAddress<mi_page_t>, block: TypedAddress<mi_block_t>, delta: &mut u64, bsize: &mut u64) -> bool {
   *bsize = mi_page_usable_block_size(page);
   const mi_padding_t* const padding = (mi_padding_t*)((uint8_t*)block + *bsize);
   mi_track_mem_defined(padding,sizeof(mi_padding_t));
@@ -323,7 +348,7 @@ static void mi_padding_shrink(const mi_page_t* page, const mi_block_t* block, co
 // only maintain stats for smaller objects if requested
 #if (MI_STAT>0)
 static void mi_stat_free(const mi_page_t* page, const mi_block_t* block) {
-  #if (MI_STAT < 2)  
+  #if (MI_STAT < 2)
   MI_UNUSED(block);
   #endif
   mi_heap_t* const heap = mi_heap_get_default();
@@ -331,7 +356,7 @@ static void mi_stat_free(const mi_page_t* page, const mi_block_t* block) {
   #if (MI_STAT>1)
   const size_t usize = mi_page_usable_size_of(page, block);
   mi_heap_stat_decrease(heap, malloc, usize);
-  #endif  
+  #endif
   if (bsize <= MI_MEDIUM_OBJ_SIZE_MAX) {
     mi_heap_stat_decrease(heap, normal, bsize);
     #if (MI_STAT > 1)
@@ -343,7 +368,7 @@ static void mi_stat_free(const mi_page_t* page, const mi_block_t* block) {
   }
   else {
     mi_heap_stat_decrease(heap, huge, bsize);
-  }  
+  }
 }
 #else
 static void mi_stat_free(const mi_page_t* page, const mi_block_t* block) {
@@ -382,7 +407,7 @@ static mi_decl_noinline void _mi_free_block_mt(mi_page_t* page, mi_block_t* bloc
   // that is safe as these are constant and the page won't be freed (as the block is not freed yet).
   mi_check_padding(page, block);
   mi_padding_shrink(page, block, sizeof(mi_block_t));       // for small size, ensure we can fit the delayed thread pointers without triggering overflow detection
-  
+
   // huge page segments are always abandoned and can be freed immediately
   mi_segment_t* segment = _mi_page_segment(page);
   if (segment->kind == MI_SEGMENT_HUGE) {
@@ -398,7 +423,7 @@ static mi_decl_noinline void _mi_free_block_mt(mi_page_t* page, mi_block_t* bloc
     _mi_segment_huge_page_reset(segment, page, block);
     #endif
   }
-  
+
   #if (MI_DEBUG!=0) && !MI_TRACK_ENABLED                    // note: when tracking, cannot use mi_usable_size with multi-threading
   if (segment->kind != MI_SEGMENT_HUGE) {                   // not for huge segments as we just reset the content
     memset(block, MI_DEBUG_FREED, mi_usable_size(block));

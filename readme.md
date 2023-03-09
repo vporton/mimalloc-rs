@@ -1,7 +1,9 @@
 In this fork, going to port mimalloc to pure Rust.
 
-Based on commit [dd73480](https://github.com/microsoft/mimalloc/commit/dd7348066fe40e8bf372fa4e9538910a5e24a75f)
+Based on commit [dd73480](https://github.com/microsoft/mimalloc/tree/dd7348066fe40e8bf372fa4e9538910a5e24a75f)
 of mimalloc.
+
+FIXME: `null` is wrong everywhere. Check what is inline and what not.
 
 ```
 #if MI_PADDING
