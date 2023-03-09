@@ -40,6 +40,7 @@ impl<T> Clone for TypedAddress<T> {
         *self
     }
 }
+
 impl<T> Copy for TypedAddress<T> {}
 
 impl<T> Typed for TypedAddress<T> {
