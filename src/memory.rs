@@ -27,11 +27,11 @@ impl<T> TypedAddress<T> {
             phantom: PhantomData,
         }
     }
-    pub fn offset(&self, offset: isize) -> Self {
-        Self::from_address((self.inner as isize + offset) as u64)
-    }
-    pub fn byte_address(&self) -> Address {
-        Address(self.inner)
+    // pub fn offset(&self, offset: isize) -> Self {
+    //     Self::from_address((self.inner as isize + offset) as u64)
+    // }
+    pub fn byte_address(&self) -> u64 {
+        self.inner
     }
 }
 
@@ -68,10 +68,10 @@ pub trait MemoryExt: Memory {
 
 impl MemoryExt for dyn Memory {
     fn write_value<T>(&self, offset: TypedAddress<T>, value: &T) {
-        self.write(offset.byte_address(), unsafe { from_raw_parts(value as *const T as *const _, size_of::<T>()) })
+        self.write(Address(offset.byte_address()), unsafe { from_raw_parts(value as *const T as *const _, size_of::<T>()) })
     }
     fn read_value<T>(&self, offset: TypedAddress<T>, value: *mut T) {
-        self.read(offset.byte_address(), unsafe { from_raw_parts_mut(value as *mut _, size_of::<T>()) })
+        self.read(Address(offset.byte_address()), unsafe { from_raw_parts_mut(value as *mut _, size_of::<T>()) })
     }
     fn return_value<T>(&self, offset: TypedAddress<T>) -> T {
         let mut x = MaybeUninit::<T>::uninit();
@@ -87,32 +87,58 @@ impl MemoryExt for dyn Memory {
     }
 }
 
+struct Pointer<'a, T, M: MemoryExt> {
+    pub memory: &'a M,
+    pub address: TypedAddress<T>,
+}
 
-/// `write_field!(memory, address=>field, value)`
+impl<'a, T, M: MemoryExt> Pointer<'a, T, M> {
+    pub fn byte_address(&self) -> u64 {
+        self.address.byte_address()
+    }
+}
+
+impl<'a, T, M: MemoryExt> Typed for Pointer<'a, T, M> {
+    type Type = T;
+}
+
+impl<'a, T, M: MemoryExt> Pointer<'a, T, M> {
+    fn write_value(&self, value: &T) {
+        self.memory.write_value(self.address, value)
+    }
+    fn read_value(&self, value: *mut T) {
+        self.memory.read_value(self.address, value)
+    }
+    pub fn return_value(&self) -> T {
+        self.memory.return_value(self.address)
+    }
+}
+
+/// `write_field!(pointer=>field, value)`
 macro_rules! write_field {
-    ($mem:expr,$addr:expr=>$field:ident,$value:expr) => {
-        $mem.write_value($addr + offset_of!(<$addr::Type>::$field).as_u32() as usize, $value)
+    ($pointer:expr=>$field:ident,$value:expr) => {
+        $mem.write_value($pointer.byte_address() + offset_of!(<$addr::Type>::$field).as_u32() as usize, $value)
     };
 }
 
-/// `read_field!(memory, address=>field, pointer)`
+/// `read_field!(pointer=>field, pointer)`
 macro_rules! read_field {
-    ($mem:expr,$addr:expr=>$field:ident,$pointer:expr) => {
-        $mem.read_value($addr + offset_of!(<$addr::Type>::$field).as_u32() as usize, $pointer)
+    ($pointer:expr=>$field:ident,$to:expr) => {
+        $pointer.read_value($pointer.byte_address() + offset_of!(<$addr::Type>::$field).as_u32() as usize, $to)
     };
 }
 
-/// `return_field!(memory, address=>field)`
+/// `return_field!(pointer=>field)`
 macro_rules! return_field {
-    ($mem:expr,$addr:expr=>$field:ident) => {
-        $mem.return_value($addr + offset_of!(<$addr::Type>::$field).as_u32() as usize)
+    ($pointer:expr=>$field:ident) => {
+        $pointer.return_value($pointer.byte_address() + offset_of!(<$addr::Type>::$field).as_u32() as usize)
     };
 }
 
-/// `update_field!(memory, address=>field, update)`
+/// `update_field!(pointer=>field, update)`
 macro_rules! update_field {
-    ($mem:expr,$addr:expr=>$field:ident,$update:expr) => {
-        $mem.update_value($addr + offset_of!(<$addr::Type>::$field).as_u32() as usize, update)
+    ($pointer:expr=>$field:ident,$update:expr) => {
+        $pointer.update_value($addr + offset_of!(<$addr::Type>::$field).as_u32() as usize, update)
     };
 }
 
