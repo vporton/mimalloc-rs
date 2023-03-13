@@ -34,8 +34,7 @@ impl Deref for CanisterStableMemoryRef {
     type Target = CanisterStableMemory;
 
     fn deref(&self) -> &Self::Target {
-        static VALUE: CanisterStableMemory = CanisterStableMemory {};
-        &VALUE
+        &CanisterStableMemory {}
     }
 }
 
