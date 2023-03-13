@@ -5,6 +5,9 @@ of mimalloc.
 
 FIXME: `null` is wrong everywhere. Check what is inline and what not.
 
+TODO: When more than one `Pointer` is passed to a function, it
+is more efficient to use `Memory` + `TypedAddress`.
+
 ```
 #if MI_PADDING
 ...
