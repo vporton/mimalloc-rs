@@ -93,6 +93,12 @@ struct Pointer<'a, T, M: MemoryExt> {
 }
 
 impl<'a, T, M: MemoryExt> Pointer<'a, T, M> {
+    pub fn new(memory: &'a M, address: TypedAddress<T>) -> Self {
+        Self {
+            memory,
+            address,
+        }
+    }
     pub fn byte_address(&self) -> u64 {
         self.address.byte_address()
     }
