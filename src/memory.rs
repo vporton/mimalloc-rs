@@ -1,5 +1,6 @@
 use std::marker::PhantomData;
 use std::mem::{MaybeUninit, size_of};
+use std::ops::Deref;
 use std::slice::{from_raw_parts, from_raw_parts_mut};
 use derive_more::Display;
 
@@ -87,13 +88,17 @@ impl MemoryExt for dyn Memory {
     }
 }
 
-struct Pointer<'a, T, M: MemoryExt> {
-    pub memory: &'a M,
+struct Pointer<T, MR: Deref>
+    where MR::Target: MemoryExt
+{
+    pub memory: MR,
     pub address: TypedAddress<T>,
 }
 
-impl<'a, T, M: MemoryExt> Pointer<'a, T, M> {
-    pub fn new(memory: &'a M, address: TypedAddress<T>) -> Self {
+impl<T, MR: Deref> Pointer<T, MR>
+    where MR::Target: MemoryExt
+{
+    pub fn new(memory: MR, address: TypedAddress<T>) -> Self {
         Self {
             memory,
             address,
@@ -104,11 +109,15 @@ impl<'a, T, M: MemoryExt> Pointer<'a, T, M> {
     }
 }
 
-impl<'a, T, M: MemoryExt> Typed for Pointer<'a, T, M> {
+impl<T, MR: Deref> Typed for Pointer<T, MR>
+    where MR::Target: MemoryExt
+{
     type Type = T;
 }
 
-impl<'a, T, M: MemoryExt> Pointer<'a, T, M> {
+impl<T, MR: Deref> Pointer<T, MR>
+    where MR::Target: MemoryExt
+{
     fn write_value(&self, value: &T) {
         self.memory.write_value(self.address, value)
     }

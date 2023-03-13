@@ -1,4 +1,5 @@
-use ic_cdk::api::stable::{StableMemory};
+use std::ops::Deref;
+use ic_cdk::api::stable::{CanisterStableMemory, StableMemory};
 use crate::memory::{Address, AllocationError, Memory, PagedMemory};
 
 pub const WASM_PAGE_SIZE_IN_BYTES: usize = 64 * 1024; // 64KB
@@ -25,3 +26,16 @@ impl Memory for dyn StableMemory {
 impl PagedMemory for dyn StableMemory {
     const PAGE_SIZE_IN_BYTES: usize = WASM_PAGE_SIZE_IN_BYTES;
 }
+
+/// It's advantage over `&CanisterStableMemory` is that `CanisterStableMemoryRef` is zero-size.
+struct CanisterStableMemoryRef;
+
+impl Deref for CanisterStableMemoryRef {
+    type Target = CanisterStableMemory;
+
+    fn deref(&self) -> &Self::Target {
+        static VALUE: CanisterStableMemory = CanisterStableMemory {};
+        &VALUE
+    }
+}
+
