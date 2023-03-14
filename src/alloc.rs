@@ -9,7 +9,7 @@ terms of the MIT license. A copy of the license can be found in the file
 // Allocation
 // ------------------------------------------------------
 
-use std::any::TypeId;
+use std::fmt::Pointer;
 use std::mem::size_of;
 
 // Fast allocation in a page: just pop from the free list.
@@ -629,22 +629,20 @@ fn mi_free(p: Address) {
   }
 }
 
-///////////////////////////////////////////////////////////////////////////////////////////////
-
 // return true if successful
 fn _mi_free_delayed_block(block: Pointer<mi_block_t>) -> bool {
   // get segment and page
   let segment: Pointer<mi_segment_t> = _mi_ptr_segment(block);
   mi_assert_internal!(_mi_ptr_cookie(segment) == segment->cookie);
   mi_assert_internal!(_mi_thread_id() == segment->thread_id);
-  mi_page_t* const page = _mi_segment_page_of(segment, block);
+  let page: Pointer<mi_page_t> = _mi_segment_page_of(segment, block);
 
   // Clear the no-delayed flag so delayed freeing is used again for this page.
   // This must be done before collecting the free lists on this page -- otherwise
   // some blocks may end up in the page `thread_free` list with no blocks in the
   // heap `thread_delayed_free` list which may cause the page to be never freed!
   // (it would only be freed if we happen to scan it in `mi_page_queue_find_free_ex`)
-  if (!_mi_page_try_use_delayed_free(page, MI_USE_DELAYED_FREE, false /* dont overwrite never delayed */)) {
+  if !_mi_page_try_use_delayed_free(page, MI_USE_DELAYED_FREE, false /* dont overwrite never delayed */) {
     return false;
   }
 
@@ -653,34 +651,36 @@ fn _mi_free_delayed_block(block: Pointer<mi_block_t>) -> bool {
 
   // and free the block (possibly freeing the page as well since used is updated)
   _mi_free_block(page, true, block);
-  return true;
+  true
 }
 
 // Bytes available in a block
-mi_decl_noinline static size_t mi_page_usable_aligned_size_of(const mi_segment_t* segment, const mi_page_t* page, const void* p) mi_attr_noexcept {
-  const mi_block_t* block = _mi_page_ptr_unalign(segment, page, p);
-  const size_t size = mi_page_usable_size_of(page, block);
-  const ptrdiff_t adjust = (uint8_t*)p - (uint8_t*)block;
-  mi_assert_internal(adjust >= 0 && (size_t)adjust <= size);
-  return (size - adjust);
+fn mi_page_usable_aligned_size_of(segment: Pointer<mi_segment_t>, page: Pointer<mi_page_t>, p: Address) -> u64 {
+  let block: Pointer<mi_block_t> = _mi_page_ptr_unalign(segment, page, p);
+  let size: u64 = mi_page_usable_size_of(page, block);
+  let adjust: i64 = p.byte_address() as i64 - block.byte_address() as i64;
+  mi_assert_internal!(adjust >= 0 && adjust as u64 <= size);
+  size - adjust
 }
 
-static inline size_t _mi_usable_size(const void* p, const char* msg) mi_attr_noexcept {
-  if (p == NULL) return 0;
-  const mi_segment_t* const segment = mi_checked_ptr_segment(p, msg);
-  const mi_page_t* const page = _mi_segment_page_of(segment, p);
+#[inline]
+fn _mi_usable_size(p: Address, msg: &str) -> u64 {
+  if p == null {
+    return 0;
+  }
+  let segment: Pointer<mi_segment_t>  = mi_checked_ptr_segment(p, msg);
+  let page: Pointer<mi_page_t> = _mi_segment_page_of(segment, p);
   if mi_likely(!mi_page_has_aligned(page)) {
-    const mi_block_t* block = (const mi_block_t*)p;
-    return mi_page_usable_size_of(page, block);
-  }
-  else {
+    let block: Pointer<mi_block_t> = Pointer::from_address(p);
+    mi_page_usable_size_of(page, block)
+  } else {
     // split out to separate routine for improved code generation
-    return mi_page_usable_aligned_size_of(segment, page, p);
+    mi_page_usable_aligned_size_of(segment, page, p)
   }
 }
 
-mi_decl_nodiscard size_t mi_usable_size(const void* p) mi_attr_noexcept {
-  return _mi_usable_size(p, "mi_usable_size");
+fn mi_usable_size(p: Address) -> u64 {
+  _mi_usable_size(p, "mi_usable_size")
 }
 
 
@@ -688,9 +688,11 @@ mi_decl_nodiscard size_t mi_usable_size(const void* p) mi_attr_noexcept {
 // Allocation extensions
 // ------------------------------------------------------
 
-void mi_free_size(void* p, size_t size) mi_attr_noexcept {
-  MI_UNUSED_RELEASE(size);
-  mi_assert(p == NULL || size <= _mi_usable_size(p,"mi_free_size"));
+///////////////////////////////////////////////////////////////////////////////////////////////
+
+fn mi_free_size(p: Pointer, size: u64) {
+  MI_UNUSED_RELEASE!(size);
+  mi_assert(p == null || size <= _mi_usable_size(p,"mi_free_size"));
   mi_free(p);
 }
 
