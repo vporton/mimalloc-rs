@@ -899,6 +899,4 @@ fn mi_strndup(s: TypedPointer<u8>, n: u64) -> TypedPointer<u8> {
   mi_heap_strndup(mi_get_default_heap(), s, n)
 }
 
-///////////////////////////////////////////////////////////////////////////////////////////////
-
 // TODO: `mi_heap_realpath` & `mi_realpath` removed from the source.
