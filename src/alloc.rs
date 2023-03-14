@@ -9,13 +9,13 @@ terms of the MIT license. A copy of the license can be found in the file
 // Allocation
 // ------------------------------------------------------
 
-use std::fmt::Pointer;
+use std::fmt::{Pointer, TypedPointer};
 use std::mem::size_of;
 
 // Fast allocation in a page: just pop from the free list.
 // Fall back to generic allocation only if the list is empty.
 #[inline]
-pub fn _mi_page_malloc(heap: Pointer<mi_heap_t>, page: Pointer<mi_page_t>, size: u64, zero: bool) -> Address {
+pub fn _mi_page_malloc(heap: TypedPointer<mi_heap_t>, page: TypedPointer<mi_page_t>, size: u64, zero: bool) -> Address {
   mi_assert_internal!(return_field!(page=>xblock_size)==0 || mi_page_block_size(page) >= size);
   let block = return_field!(page=>free);
   if mi_unlikely(block == null) {
@@ -69,7 +69,7 @@ pub fn _mi_page_malloc(heap: Pointer<mi_heap_t>, page: Pointer<mi_page_t>, size:
 
   #[cfg(all(mi_padding, mi_encode_freelist, not(mi_track_enabled)))]
   {
-    let padding = Pointer::<mi_padding_t>::from_address(block.byte_address().0 + mi_page_usable_block_size(page));
+    let padding = TypedPointer::<mi_padding_t>::from_address(block.byte_address().0 + mi_page_usable_block_size(page));
     let delta: i64 = padding.byte_address().0 - block.byte_address().0 - (size - MI_PADDING_SIZE);
     #[cfg(mi_debug_2)]
     {
@@ -91,7 +91,7 @@ pub fn _mi_page_malloc(heap: Pointer<mi_heap_t>, page: Pointer<mi_page_t>, size:
 }
 
 #[inline]
-fn mi_heap_malloc_small_zero(heap: Pointer<mi_heap_t>, size: u64, zero: bool) -> Address {
+fn mi_heap_malloc_small_zero(heap: TypedPointer<mi_heap_t>, size: u64, zero: bool) -> Address {
   mi_assert!(heap != null);
   #[cfg(mi_debug)]
   {
@@ -104,7 +104,7 @@ fn mi_heap_malloc_small_zero(heap: Pointer<mi_heap_t>, size: u64, zero: bool) ->
   if size == 0 {
     size = u64::size_of();
   }
-  let page: Pointer<mi_page_t> = _mi_heap_get_free_small_page(heap, size + MI_PADDING_SIZE);
+  let page: TypedPointer<mi_page_t> = _mi_heap_get_free_small_page(heap, size + MI_PADDING_SIZE);
   let p: Address = _mi_page_malloc(heap, page, size + MI_PADDING_SIZE, zero);
   mi_assert_internal!(p == null || mi_usable_size(p) >= size);
   #[cfg(mi_stat_2)]
@@ -120,7 +120,7 @@ fn mi_heap_malloc_small_zero(heap: Pointer<mi_heap_t>, size: u64, zero: bool) ->
 
 // allocate a small block
 #[inline]
-fn mi_heap_malloc_small(heap: Pointer<mi_heap_t>, size: u64) -> Address {
+fn mi_heap_malloc_small(heap: TypedPointer<mi_heap_t>, size: u64) -> Address {
   mi_heap_malloc_small_zero(heap, size, false)
 }
 
@@ -131,7 +131,7 @@ fn mi_malloc_small(size: u64) -> Address {
 
 // The main allocation function
 #[inline]
-fn _mi_heap_malloc_zero_ex(heap: Pointer<mi_heap_t>, size: u64, zero: bool, huge_alignment: u64) -> Address {
+fn _mi_heap_malloc_zero_ex(heap: TypedPointer<mi_heap_t>, size: u64, zero: bool, huge_alignment: u64) -> Address {
   if mi_likely(size <= MI_SMALL_SIZE_MAX) {
     mi_assert_internal!(huge_alignment == 0);
     return mi_heap_malloc_small_zero(heap, size, zero);
@@ -154,12 +154,12 @@ fn _mi_heap_malloc_zero_ex(heap: Pointer<mi_heap_t>, size: u64, zero: bool, huge
 }
 
 #[inline]
-fn _mi_heap_malloc_zero(heap: Pointer<mi_heap_t>, size: u64, zero: bool) -> Address {
+fn _mi_heap_malloc_zero(heap: TypedPointer<mi_heap_t>, size: u64, zero: bool) -> Address {
   _mi_heap_malloc_zero_ex(heap, size, zero, 0)
 }
 
 #[inline]
-fn mi_heap_malloc(heap: Pointer<mi_heap_t>, size: u64) -> Address {
+fn mi_heap_malloc(heap: TypedPointer<mi_heap_t>, size: u64) -> Address {
   _mi_heap_malloc_zero(heap, size, false)
 }
 
@@ -190,7 +190,7 @@ fn mi_zalloc(size: u64) -> Address {
 
 // linear check if the free list contains a specific element
 #[cfg(all(mi_encode_freelist, any(mi_secure_5, mi_debug)))]
-fn mi_list_contains(page: Pointer<mi_page_t>, list: Pointer<mi_block_t>, elem: Pointer<mi_block_t>) -> bool {
+fn mi_list_contains(page: TypedPointer<mi_page_t>, list: TypedPointer<mi_block_t>, elem: TypedPointer<mi_block_t>) -> bool {
   while list != null {
     if elem==list {
       return true;
@@ -201,7 +201,7 @@ fn mi_list_contains(page: Pointer<mi_page_t>, list: Pointer<mi_block_t>, elem: P
 }
 
 #[cfg(all(mi_encode_freelist, any(mi_secure_5, mi_debug)))]
-fn mi_check_is_double_freex(page: Pointer<mi_page_t>, block: Pointer<mi_block_t>) -> bool {
+fn mi_check_is_double_freex(page: TypedPointer<mi_page_t>, block: TypedPointer<mi_block_t>) -> bool {
   // The decoded value is in the same page (or NULL).
   // Walk the free lists to verify positively if it is already freed
   if mi_list_contains(page, return_value!(page=>free), block) ||
@@ -228,9 +228,9 @@ macro_rules! mi_track_page {
 
 #[cfg(all(mi_encode_freelist, any(mi_secure_5, mi_debug)))]
 #[inline]
-fn mi_check_is_double_free(page: Pointer<mi_page_t>, block: Pointer<mi_block_t>) -> bool {
+fn mi_check_is_double_free(page: TypedPointer<mi_page_t>, block: TypedPointer<mi_block_t>) -> bool {
   let mut is_double_free = false;
-  let n: Pointer<mi_block_t> =  = mi_block_nextx(page, block, return_value!(page=>keys)); // pretend it is freed, and get the decoded first field
+  let n: TypedPointer<mi_block_t> =  = mi_block_nextx(page, block, return_value!(page=>keys)); // pretend it is freed, and get the decoded first field
   if ((n as u64 & (MI_INTPTR_SIZE-1)) == 0 &&  // quick check: aligned pointer?
       (n==null || mi_is_in_same_page(block, n))) // quick check: in same page or NULL?
   {
@@ -243,7 +243,7 @@ fn mi_check_is_double_free(page: Pointer<mi_page_t>, block: Pointer<mi_block_t>)
 
 #[cfg(not(all(mi_encode_freelist, any(mi_secure_5, mi_debug))))]
 #[inline]
-fn mi_check_is_double_free(page: Pointer<mi_page_t>, block: Pointer<mi_block_t>) -> bool {
+fn mi_check_is_double_free(page: TypedPointer<mi_page_t>, block: TypedPointer<mi_block_t>) -> bool {
   MI_UNUSED(page);
   MI_UNUSED(block);
   false
@@ -254,9 +254,9 @@ fn mi_check_is_double_free(page: Pointer<mi_page_t>, block: Pointer<mi_block_t>)
 // ---------------------------------------------------------------------------
 
 #[cfg(all(mi_padding, mi_encode_freelist, not(mi_track_enabled)))]
-fn mi_page_decode_padding(page: Pointer<mi_page_t>, block: Pointer<mi_block_t>, delta: &mut u64, bsize: &mut u64) -> bool {
+fn mi_page_decode_padding(page: TypedPointer<mi_page_t>, block: TypedPointer<mi_block_t>, delta: &mut u64, bsize: &mut u64) -> bool {
   *bsize = mi_page_usable_block_size(page);
-  let padding: Pointer<mi_padding_t> = Pointer::from_address(block.byte_address() + *bsize);
+  let padding: TypedPointer<mi_padding_t> = TypedPointer::from_address(block.byte_address() + *bsize);
   mi_track_mem_defined(padding, mi_padding_t::size_of());
   *delta = return_value!(padding=>delta);
   let canary: u32 = return_value!(padding=>canary);
@@ -268,7 +268,7 @@ fn mi_page_decode_padding(page: Pointer<mi_page_t>, block: Pointer<mi_block_t>, 
 
 // Return the exact usable size of a block.
 #[cfg(all(mi_padding, mi_encode_freelist, not(mi_track_enabled)))]
-fn mi_page_usable_size_of(page: Pointer<mi_page_t>, block: Pointer<mi_block_t>) -> u64 {
+fn mi_page_usable_size_of(page: TypedPointer<mi_page_t>, block: TypedPointer<mi_block_t>) -> u64 {
   let mut bsize: u64;
   let mut delta: u64;
   let ok = mi_page_decode_padding(page, block, &mut delta, &mut bsize);
@@ -282,7 +282,7 @@ fn mi_page_usable_size_of(page: Pointer<mi_page_t>, block: Pointer<mi_block_t>) 
 }
 
 #[cfg(all(mi_padding, mi_encode_freelist, not(mi_track_enabled)))]
-fn mi_verify_padding(page: Pointer<mi_page_t>, block: Pointer<mi_block_t>, size: &mut u64, wrong: &mut u64) -> bool {
+fn mi_verify_padding(page: TypedPointer<mi_page_t>, block: TypedPointer<mi_block_t>, size: &mut u64, wrong: &mut u64) -> bool {
   let mut bsize: u64;
   let mut delta: u64;
   let ok: bool = mi_page_decode_padding(page, block, &mut delta, &mut bsize);
@@ -309,7 +309,7 @@ fn mi_verify_padding(page: Pointer<mi_page_t>, block: Pointer<mi_block_t>, size:
 }
 
 #[cfg(all(mi_padding, mi_encode_freelist, not(mi_track_enabled)))]
-fn mi_check_padding(page: Pointer<mi_page_t>, block: Pointer<mi_block_t>) {
+fn mi_check_padding(page: TypedPointer<mi_page_t>, block: TypedPointer<mi_block_t>) {
   u64 size;
   u64 wrong;
   if !mi_verify_padding(page, block, &mut size, &mut wrong) {
@@ -322,7 +322,7 @@ fn mi_check_padding(page: Pointer<mi_page_t>, block: Pointer<mi_block_t>) {
 // contain the pointer for the delayed list, then shrink the padding (by decreasing delta)
 // so it will later not trigger an overflow error in `mi_free_block`.
 #[cfg(all(mi_padding, mi_encode_freelist, not(mi_track_enabled)))]
-fn mi_padding_shrink(page: Pointer<mi_page_t>, block Pointer<mi_block_t>, min_size: u64) {
+fn mi_padding_shrink(page: TypedPointer<mi_page_t>, block TypedPointer<mi_block_t>, min_size: u64) {
   let mut bsize: u64;
   let mut delta: u64;
   let ok = mi_page_decode_padding(page, block, &mut delta, &mut bsize);
@@ -336,24 +336,24 @@ fn mi_padding_shrink(page: Pointer<mi_page_t>, block Pointer<mi_block_t>, min_si
   };
   let new_delta: u64 = bsize - min_size;
   mi_assert_internal!(new_delta < bsize);
-  let padding = Pointer::<mi_padding_t>::from_address(block.byte_address() + bsize);
+  let padding = TypedPointer::<mi_padding_t>::from_address(block.byte_address() + bsize);
   write_value!(padding=>delta, new_delta as u32);
 }
 
 #[cfg(not(all(mi_padding, mi_encode_freelist, not(mi_track_enabled))))]
-fn mi_check_padding(page: Pointer<mi_page_t>, block: Pointer<mi_block_t>) {
+fn mi_check_padding(page: TypedPointer<mi_page_t>, block: TypedPointer<mi_block_t>) {
   MI_UNUSED!(page);
   MI_UNUSED!(block);
 }
 
 #[cfg(not(all(mi_padding, mi_encode_freelist, not(mi_track_enabled))))]
-fn mi_page_usable_size_of(page: Pointer<mi_page_t>, block: Pointer<mi_block_t>) -> u64 {
+fn mi_page_usable_size_of(page: TypedPointer<mi_page_t>, block: TypedPointer<mi_block_t>) -> u64 {
   MI_UNUSED!(block);
   mi_page_usable_block_size(page)
 }
 
 #[cfg(not(all(mi_padding, mi_encode_freelist, not(mi_track_enabled))))]
-fn mi_padding_shrink(page: Pointer<mi_page_t>, block: Pointer<mi_block_t>, min_size: u64) {
+fn mi_padding_shrink(page: TypedPointer<mi_page_t>, block: TypedPointer<mi_block_t>, min_size: u64) {
   MI_UNUSED!(page);
   MI_UNUSED!(block);
   MI_UNUSED!(min_size);
@@ -361,10 +361,10 @@ fn mi_padding_shrink(page: Pointer<mi_page_t>, block: Pointer<mi_block_t>, min_s
 
 // only maintain stats for smaller objects if requested
 #[cfg(mi_stat)]
-fn mi_stat_free(page: Pointer<mi_page_t>, block: Pointer<mi_block_t>) {
+fn mi_stat_free(page: TypedPointer<mi_page_t>, block: TypedPointer<mi_block_t>) {
   #[cfg(not(mi_stat_2)] // FIXME: Check applying to macro as block.
   MI_UNUSED!(block);
-  let heap: Pointer<mi_heap_t> = mi_heap_get_default();
+  let heap: TypedPointer<mi_heap_t> = mi_heap_get_default();
   let bsize: u64 = mi_page_usable_block_size(page);
   #[cfg(mi_stat_2)]
   {
@@ -383,7 +383,7 @@ fn mi_stat_free(page: Pointer<mi_page_t>, block: Pointer<mi_block_t>) {
 }
 
 #[cfg(not(mi_stat))]
-fn mi_stat_free(page: Pointer<mi_page_t>, block: Pointer<mi_block_t>) {
+fn mi_stat_free(page: TypedPointer<mi_page_t>, block: TypedPointer<mi_block_t>) {
   MI_UNUSED!(page);
   MI_UNUSED!(block);
 }
@@ -393,8 +393,8 @@ fn mi_stat_free(page: Pointer<mi_page_t>, block: Pointer<mi_block_t>) {
 
 // maintain stats for huge objects
 #[cfg(all(mi_huge_page_abandon, mi_stat))]
-fn mi_stat_huge_free(page: Pointer<mi_page_t>) {
-  let heap: Pointer<mi_heap_t> = mi_heap_get_default();
+fn mi_stat_huge_free(page: TypedPointer<mi_page_t>) {
+  let heap: TypedPointer<mi_heap_t> = mi_heap_get_default();
   let bsize: u64 = mi_page_block_size(page); // to match stats in `page.c:mi_page_huge_alloc`
   if bsize <= MI_LARGE_OBJ_SIZE_MAX {
     mi_heap_stat_decrease(heap, large, bsize);
@@ -404,7 +404,7 @@ fn mi_stat_huge_free(page: Pointer<mi_page_t>) {
 }
 
 #[cfg(all(mi_huge_page_abandon, not(mi_stat))]
-fn mi_stat_huge_free(page: Pointer<mi_page_t>) {
+fn mi_stat_huge_free(page: TypedPointer<mi_page_t>) {
   MI_UNUSED!(page);
 }
 
@@ -413,7 +413,7 @@ fn mi_stat_huge_free(page: Pointer<mi_page_t>) {
 // ------------------------------------------------------
 
 // multi-threaded free (or free in huge block if compiled with MI_HUGE_PAGE_ABANDON)
-fn _mi_free_block_mt(page: Pointer<mi_page_t>, block: Pointer<mi_block_t>)
+fn _mi_free_block_mt(page: TypedPointer<mi_page_t>, block: TypedPointer<mi_block_t>)
 {
   // The padding check may access the non-thread-owned page for the key values.
   // that is safe as these are constant and the page won't be freed (as the block is not freed yet).
@@ -421,7 +421,7 @@ fn _mi_free_block_mt(page: Pointer<mi_page_t>, block: Pointer<mi_block_t>)
   mi_padding_shrink(page, block, sizeof(mi_block_t));       // for small size, ensure we can fit the delayed thread pointers without triggering overflow detection
 
   // huge page segments are always abandoned and can be freed immediately
-  let segment: Pointer<mi_segment_t> = _mi_page_segment(page);
+  let segment: TypedPointer<mi_segment_t> = _mi_page_segment(page);
   if return_value!(segment=>kind) == MI_SEGMENT_HUGE {
     #[cfg(mi_huge_page_abandon)]
     {
@@ -468,11 +468,11 @@ fn _mi_free_block_mt(page: Pointer<mi_page_t>, block: Pointer<mi_block_t>)
 
   if mi_unlikely(use_delayed) {
     // racy read on `heap`, but ok because MI_DELAYED_FREEING is set (see `mi_heap_delete` and `mi_heap_collect_abandon`)
-    let heap: Pointer<mi_heap_t> = Pointer::from_address(mi_atomic_load_acquire(&return_value!(page=>xheap))); //mi_page_heap(page);
+    let heap: TypedPointer<mi_heap_t> = TypedPointer::from_address(mi_atomic_load_acquire(&return_value!(page=>xheap))); //mi_page_heap(page);
     mi_assert_internal!(heap != NULL);
     if heap != null {
       // add to the delayed free list of this heap. (do this atomically as the lock only protects heap memory validity)
-      let dfree: Pointer<mi_block_t> = mi_atomic_load_ptr_relaxed(mi_block_t, &return_value!(page=>thread_delayed_free));
+      let dfree: TypedPointer<mi_block_t> = mi_atomic_load_ptr_relaxed(mi_block_t, &return_value!(page=>thread_delayed_free));
       loop {
         mi_block_set_nextx(heap, block, dfree, return_value!(heap=>keys));
         if mi_atomic_cas_ptr_weak_release(mi_block_t, &return_value!(heap=>thread_delayed_free), &dfree, block) {
@@ -498,7 +498,7 @@ fn _mi_free_block_mt(page: Pointer<mi_page_t>, block: Pointer<mi_block_t>)
 
 // regular free
 #[inline]
-fn _mi_free_block(page: Pointer<mi_page_t>, local: bool, block: Pointer<mi_block_t>) {
+fn _mi_free_block(page: TypedPointer<mi_page_t>, local: bool, block: TypedPointer<mi_block_t>) {
   // and push it on the free list
   //const size_t bsize = mi_page_block_size(page);
   if mi_likely(local) {
@@ -528,18 +528,18 @@ fn _mi_free_block(page: Pointer<mi_page_t>, local: bool, block: Pointer<mi_block
 }
 
 // Adjust a block that was allocated aligned, to the actual start of the block in the page.
-fn _mi_page_ptr_unalign(segment: Pointer<mi_segment_t>, page: Pointer<mi_page_t>, p: u64) -> Pointer<mi_block_t> {
+fn _mi_page_ptr_unalign(segment: TypedPointer<mi_segment_t>, page: TypedPointer<mi_page_t>, p: u64) -> TypedPointer<mi_block_t> {
   mi_assert_internal!(page!=null && p!=null);
   let diff  : u64 = p - _mi_page_start(segment, page, null);
   let adjust: u64 = diff % mi_page_block_size(page);
-  return Pointer::from_address(p - adjust);
+  return TypedPointer::from_address(p - adjust);
 }
 
-fn _mi_free_generic(segment: Pointer<mi_segment_t>, page: Pointer<mi_page_t>, is_local: bool, p: u64) {
-  let block: Pointer<mi_block_t> = if mi_page_has_aligned(page) {
+fn _mi_free_generic(segment: TypedPointer<mi_segment_t>, page: TypedPointer<mi_page_t>, is_local: bool, p: u64) {
+  let block: TypedPointer<mi_block_t> = if mi_page_has_aligned(page) {
     _mi_page_ptr_unalign(segment, page, p)
   } else {
-    Pointer::from_address(p);
+    TypedPointer::from_address(p);
   };
   mi_stat_free(page, block);                 // stat_free may access the padding
   mi_track_free(p);
@@ -550,7 +550,7 @@ fn _mi_free_generic(segment: Pointer<mi_segment_t>, page: Pointer<mi_page_t>, is
 // This is just a single `and` in assembly but does further checks in debug mode
 // (and secure mode) if this was a valid pointer.
 #[inline]
-fn mi_checked_ptr_segment(p: u64, msg: &str) -> Pointer<mi_segment_t>
+fn mi_checked_ptr_segment(p: u64, msg: &str) -> TypedPointer<mi_segment_t>
 {
   MI_UNUSED!(msg);
   mi_assert!(p != null);
@@ -558,10 +558,10 @@ fn mi_checked_ptr_segment(p: u64, msg: &str) -> Pointer<mi_segment_t>
   #[cfg(mi_debug)]
   if mi_unlikely((p & (MI_INTPTR_SIZE - 1)) != 0) {
     _mi_error_message(EINVAL, "%s: invalid (unaligned) pointer: %p\n", msg, p);
-    return Pointer::from_address(null);
+    return TypedPointer::from_address(null);
   }
 
-  let segment: Pointer<mi_segment_t> = _mi_ptr_segment(p);
+  let segment: TypedPointer<mi_segment_t> = _mi_ptr_segment(p);
   mi_assert_internal!(segment != null);
 
   let cookie = return_value!(segment=>cookie);
@@ -592,14 +592,14 @@ fn mi_free(p: Address) {
   if mi_unlikely(p == NULL) {
     return;
   }
-  let segment: Pointer<mi_segment_t> = mi_checked_ptr_segment(p,"mi_free");
+  let segment: TypedPointer<mi_segment_t> = mi_checked_ptr_segment(p,"mi_free");
   let is_local= _mi_thread_id() == mi_atomic_load_relaxed(&read_value!(segment=>thread_id));
-  let page: Pointer<mi_page_t> = _mi_segment_page_of(segment, p);
+  let page: TypedPointer<mi_page_t> = _mi_segment_page_of(segment, p);
 
   if mi_likely(is_local) {                       // thread-local free?
     if mi_likely(return_value!(page=>flags).full_aligned == 0)  // and it is not a full page (full pages need to move from the full bin), nor has aligned blocks (aligned blocks need to be unaligned)
     {
-      let block: Pointer<mi_block_t> = Pointer::from_address(p);
+      let block: TypedPointer<mi_block_t> = TypedPointer::from_address(p);
       if mi_unlikely(mi_check_is_double_free(page, block)) {
         return;
       }
@@ -630,12 +630,12 @@ fn mi_free(p: Address) {
 }
 
 // return true if successful
-fn _mi_free_delayed_block(block: Pointer<mi_block_t>) -> bool {
+fn _mi_free_delayed_block(block: TypedPointer<mi_block_t>) -> bool {
   // get segment and page
-  let segment: Pointer<mi_segment_t> = _mi_ptr_segment(block);
+  let segment: TypedPointer<mi_segment_t> = _mi_ptr_segment(block);
   mi_assert_internal!(_mi_ptr_cookie(segment) == segment->cookie);
   mi_assert_internal!(_mi_thread_id() == segment->thread_id);
-  let page: Pointer<mi_page_t> = _mi_segment_page_of(segment, block);
+  let page: TypedPointer<mi_page_t> = _mi_segment_page_of(segment, block);
 
   // Clear the no-delayed flag so delayed freeing is used again for this page.
   // This must be done before collecting the free lists on this page -- otherwise
@@ -655,8 +655,8 @@ fn _mi_free_delayed_block(block: Pointer<mi_block_t>) -> bool {
 }
 
 // Bytes available in a block
-fn mi_page_usable_aligned_size_of(segment: Pointer<mi_segment_t>, page: Pointer<mi_page_t>, p: Address) -> u64 {
-  let block: Pointer<mi_block_t> = _mi_page_ptr_unalign(segment, page, p);
+fn mi_page_usable_aligned_size_of(segment: TypedPointer<mi_segment_t>, page: TypedPointer<mi_page_t>, p: Address) -> u64 {
+  let block: TypedPointer<mi_block_t> = _mi_page_ptr_unalign(segment, page, p);
   let size: u64 = mi_page_usable_size_of(page, block);
   let adjust: i64 = p.byte_address() as i64 - block.byte_address() as i64;
   mi_assert_internal!(adjust >= 0 && adjust as u64 <= size);
@@ -668,10 +668,10 @@ fn _mi_usable_size(p: Address, msg: &str) -> u64 {
   if p == null {
     return 0;
   }
-  let segment: Pointer<mi_segment_t>  = mi_checked_ptr_segment(p, msg);
-  let page: Pointer<mi_page_t> = _mi_segment_page_of(segment, p);
+  let segment: TypedPointer<mi_segment_t>  = mi_checked_ptr_segment(p, msg);
+  let page: TypedPointer<mi_page_t> = _mi_segment_page_of(segment, p);
   if mi_likely(!mi_page_has_aligned(page)) {
-    let block: Pointer<mi_block_t> = Pointer::from_address(p);
+    let block: TypedPointer<mi_block_t> = TypedPointer::from_address(p);
     mi_page_usable_size_of(page, block)
   } else {
     // split out to separate routine for improved code generation
@@ -688,90 +688,112 @@ fn mi_usable_size(p: Address) -> u64 {
 // Allocation extensions
 // ------------------------------------------------------
 
-///////////////////////////////////////////////////////////////////////////////////////////////
-
 fn mi_free_size(p: Pointer, size: u64) {
   MI_UNUSED_RELEASE!(size);
   mi_assert(p == null || size <= _mi_usable_size(p,"mi_free_size"));
   mi_free(p);
 }
 
-void mi_free_size_aligned(void* p, size_t size, size_t alignment) mi_attr_noexcept {
-  MI_UNUSED_RELEASE(alignment);
-  mi_assert(((uintptr_t)p % alignment) == 0);
-  mi_free_size(p,size);
+fn mi_free_size_aligned(p: Pointer, size: u64, alignment: u64) {
+  MI_UNUSED_RELEASE!(alignment);
+  mi_assert!(p.byte_address() % alignment == 0);
+  mi_free_size(p, size);
 }
 
-void mi_free_aligned(void* p, size_t alignment) mi_attr_noexcept {
-  MI_UNUSED_RELEASE(alignment);
-  mi_assert(((uintptr_t)p % alignment) == 0);
+fn mi_free_aligned(p: Pointer, alignment: u64) {
+  MI_UNUSED_RELEASE!(alignment);
+  mi_assert!(p.byte_address() % alignment == 0);
   mi_free(p);
 }
 
-mi_decl_nodiscard extern inline mi_decl_restrict void* mi_heap_calloc(mi_heap_t* heap, size_t count, size_t size) mi_attr_noexcept {
-  size_t total;
-  if (mi_count_size_overflow(count,size,&total)) return NULL;
-  return mi_heap_zalloc(heap,total);
+#[inline]
+fn mi_heap_calloc(heap: TypedPointer<mi_heap_t>, count: u64, size: u64) -> Address {
+  if mi_count_size_overflow(count,size,&total) {
+    return null;
+  }
+  mi_heap_zalloc(heap,total)
 }
 
-mi_decl_nodiscard mi_decl_restrict void* mi_calloc(size_t count, size_t size) mi_attr_noexcept {
-  return mi_heap_calloc(mi_get_default_heap(),count,size);
+fn mi_calloc(count: u64, size: u64) -> Pointer {
+  mi_heap_calloc(mi_get_default_heap(), count, size)
 }
 
 // Uninitialized `calloc`
-mi_decl_nodiscard extern mi_decl_restrict void* mi_heap_mallocn(mi_heap_t* heap, size_t count, size_t size) mi_attr_noexcept {
-  size_t total;
-  if (mi_count_size_overflow(count, size, &total)) return NULL;
-  return mi_heap_malloc(heap, total);
+fn mi_heap_mallocn(heap: TypedPointer<mi_heap_t>, count: u64, size: u64) -> Pointer {
+  let mut total: u64;
+  if mi_count_size_overflow(count, size, &mut total) {
+    return null;
+  }
+  mi_heap_malloc(heap, total)
 }
 
-mi_decl_nodiscard mi_decl_restrict void* mi_mallocn(size_t count, size_t size) mi_attr_noexcept {
-  return mi_heap_mallocn(mi_get_default_heap(),count,size);
+fn mi_mallocn(count: u64, size: u64) -> Pointer {
+  mi_heap_mallocn(mi_get_default_heap(),count,size)
 }
 
-// Expand (or shrink) in place (or fail)
-void* mi_expand(void* p, size_t newsize) mi_attr_noexcept {
-  #if MI_PADDING
-  // we do not shrink/expand with padding enabled
-  MI_UNUSED(p); MI_UNUSED(newsize);
-  return NULL;
-  #else
-  if (p == NULL) return NULL;
-  const size_t size = _mi_usable_size(p,"mi_expand");
-  if (newsize > size) return NULL;
-  return p; // it fits
-  #endif
+/// Expand (or shrink) in place (or fail)
+fn mi_expand(void* p, size_t newsize) -> Pointer {
+  #[cfg(mi_padding)]
+  {
+    // we do not shrink/expand with padding enabled
+    MI_UNUSED!(p);
+    MI_UNUSED!(newsize);
+    null
+  }
+  #[cfg(not(mi_padding))]
+  {
+    if p == null {
+      return null;
+    }
+    let size: u64 = _mi_usable_size(p, "mi_expand");
+    if newsize > size {
+      return null;
+    }
+    p // it fits
+  }
 }
 
-void* _mi_heap_realloc_zero(mi_heap_t* heap, void* p, size_t newsize, bool zero) mi_attr_noexcept {
+fn _mi_heap_realloc_zero(TypedPointer<mi_heap_t>, p: Address, newsize: u64, zero: bool) -> Pointer {
   // if p == NULL then behave as malloc.
   // else if size == 0 then reallocate to a zero-sized block (and don't return NULL, just as mi_malloc(0)).
   // (this means that returning NULL always indicates an error, and `p` will not have been freed in that case.)
-  const size_t size = _mi_usable_size(p,"mi_realloc"); // also works if p == NULL (with size 0)
+  let size: u64 = _mi_usable_size(p,"mi_realloc"); // also works if p == NULL (with size 0)
   if mi_unlikely(newsize <= size && newsize >= (size / 2) && newsize > 0) {  // note: newsize must be > 0 or otherwise we return NULL for realloc(NULL,0)
     // todo: adjust potential padding to reflect the new size?
     mi_track_free_size(p, size);
-    mi_track_malloc(p,newsize,true);
+    mi_track_malloc(p, newsize, true);
     return p;  // reallocation still fits and not more than 50% waste
   }
-  void* newp = mi_heap_malloc(heap,newsize);
-  if mi_likely(newp != NULL) {
-    if (zero && newsize > size) {
+  let newp: Pointer = mi_heap_malloc(heap, newsize);
+  if mi_likely(newp != null) {
+    if zero && newsize > size {
       // also set last word in the previous allocation to zero to ensure any padding is zero-initialized
-      const size_t start = (size >= sizeof(intptr_t) ? size - sizeof(intptr_t) : 0);
-      memset((uint8_t*)newp + start, 0, newsize - start);
+      let start: u64 = if size >= size_of::<u64>() {
+        size - size_of::<u64>()
+      } else {
+        0
+      });
+      for i in start .. newsize { // TODO: possibly inefficient
+        memory.write(newp.byte_address() + i, &[0u8]);
+      }
     }
-    if mi_likely(p != NULL) {
-      if mi_likely(_mi_is_aligned(p, sizeof(uintptr_t))) {  // a client may pass in an arbitrary pointer `p`..
-        const size_t copysize = (newsize > size ? size : newsize);
-        mi_track_mem_defined(p,copysize);  // _mi_useable_size may be too large for byte precise memory tracking..
+    if mi_likely(p != null) {
+      if mi_likely(_mi_is_aligned(p, size_of::<u64>())) {  // a client may pass in an arbitrary pointer `p`..
+        let copysize: u64 = if newsize > size {
+          size
+        } else {
+          newsize
+        });
+        mi_track_mem_defined(p, copysize);  // _mi_useable_size may be too large for byte precise memory tracking..
         _mi_memcpy_aligned(newp, p, copysize);
       }
       mi_free(p); // only free the original pointer if successful
     }
   }
-  return newp;
+  newp
 }
+
+///////////////////////////////////////////////////////////////////////////////////////////////
 
 mi_decl_nodiscard void* mi_heap_realloc(mi_heap_t* heap, void* p, size_t newsize) mi_attr_noexcept {
   return _mi_heap_realloc_zero(heap, p, newsize, false);
