@@ -27,7 +27,7 @@ impl PagedMemory for dyn StableMemory {
     const PAGE_SIZE_IN_BYTES: usize = WASM_PAGE_SIZE_IN_BYTES;
 }
 
-/// It's advantage over `&CanisterStableMemory` is that `CanisterStableMemoryRef` is zero-size.
+/// Its advantage over `&CanisterStableMemory` is that `CanisterStableMemoryRef` is zero-size.
 struct CanisterStableMemoryRef;
 
 impl Deref for CanisterStableMemoryRef {
