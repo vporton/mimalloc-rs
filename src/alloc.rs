@@ -574,13 +574,11 @@ fn _mi_free_generic<MR: Deref>(memory: MR, segment: TypedAddress<mi_segment_t>, 
   _mi_free_block(memory, page, is_local, block);
 }
 
-////////////////////////////////////////////////////////////////////////////////////////////////////
-
 // Get the segment data belonging to a pointer
 // This is just a single `and` in assembly but does further checks in debug mode
 // (and secure mode) if this was a valid pointer.
 #[inline]
-fn mi_checked_ptr_segment(p: u64, msg: &str) -> TypedPointer<mi_segment_t>
+fn mi_checked_ptr_segment(p: Pointer, msg: &str) -> TypedPointer<mi_segment_t>
 {
   MI_UNUSED!(msg);
   mi_assert!(p != null);
@@ -597,7 +595,7 @@ fn mi_checked_ptr_segment(p: u64, msg: &str) -> TypedPointer<mi_segment_t>
   let cookie = return_value!(segment=>cookie);
   #[cfg(mi_debug)]
   if mi_unlikely(!mi_is_in_heap_region(p)) {
-    if !(MI_INTPTR_SIZE == 8 && std::env::consts::OS == "linux") || // TODO: Use `os_type` crate instead?
+    if !(MI_INTPTR_SIZE == 8 && cfg!(target_os = "linux")) ||
         (p >> 40) != 0x7F // linux tends to align large blocks above 0x7F000000000 (issue #640)
     {
         _mi_warning_message!("%s: pointer might not point to a valid heap region: %p\n"
@@ -615,6 +613,8 @@ fn mi_checked_ptr_segment(p: u64, msg: &str) -> TypedPointer<mi_segment_t>
 
   return segment;
 }
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
 
 // Free a block
 // fast path written carefully to prevent spilling on the stack
