@@ -88,14 +88,46 @@ impl MemoryExt for dyn Memory {
     }
 }
 
-struct Pointer<T, MR: Deref>
+struct Pointer<MR: Deref>
+    where MR::Target: MemoryExt
+{
+    pub memory: MR,
+    pub address: Address,
+}
+
+impl<MR: Deref> Pointer<MR>
+    where MR::Target: MemoryExt
+{
+    pub fn new(memory: MR, address: Address) -> Self {
+        Self {
+            memory,
+            address,
+        }
+    }
+    pub fn byte_address(&self) -> u64 {
+        self.address.0
+    }
+}
+
+impl<MR: Deref> Pointer<MR>
+    where MR::Target: MemoryExt
+{
+    fn write(&self, value: &[u8]) {
+        self.memory.write(self.address, value)
+    }
+    fn read(&self, value: &mut [u8]) {
+        self.memory.read(self.address, value)
+    }
+}
+
+struct TypedPointer<T, MR: Deref>
     where MR::Target: MemoryExt
 {
     pub memory: MR,
     pub address: TypedAddress<T>,
 }
 
-impl<T, MR: Deref> Pointer<T, MR>
+impl<T, MR: Deref> TypedPointer<T, MR>
     where MR::Target: MemoryExt
 {
     pub fn new(memory: MR, address: TypedAddress<T>) -> Self {
@@ -109,13 +141,13 @@ impl<T, MR: Deref> Pointer<T, MR>
     }
 }
 
-impl<T, MR: Deref> Typed for Pointer<T, MR>
+impl<T, MR: Deref> Typed for TypedPointer<T, MR>
     where MR::Target: MemoryExt
 {
     type Type = T;
 }
 
-impl<T, MR: Deref> Pointer<T, MR>
+impl<T, MR: Deref> TypedPointer<T, MR>
     where MR::Target: MemoryExt
 {
     fn write_value(&self, value: &T) {
