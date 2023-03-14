@@ -11,6 +11,7 @@ terms of the MIT license. A copy of the license can be found in the file
 
 use std::fmt::{Pointer, TypedPointer};
 use std::mem::size_of;
+use std::ptr::null;
 
 // Fast allocation in a page: just pop from the free list.
 // Fall back to generic allocation only if the list is empty.
@@ -793,56 +794,59 @@ fn _mi_heap_realloc_zero(TypedPointer<mi_heap_t>, p: Address, newsize: u64, zero
   newp
 }
 
-///////////////////////////////////////////////////////////////////////////////////////////////
-
-mi_decl_nodiscard void* mi_heap_realloc(mi_heap_t* heap, void* p, size_t newsize) mi_attr_noexcept {
-  return _mi_heap_realloc_zero(heap, p, newsize, false);
+fn mi_heap_realloc(heap: TypedPointer<mi_heap_t>, p: Pointer, newsize: u64) -> Pointer {
+  _mi_heap_realloc_zero(heap, p, newsize, false)
 }
 
-mi_decl_nodiscard void* mi_heap_reallocn(mi_heap_t* heap, void* p, size_t count, size_t size) mi_attr_noexcept {
-  size_t total;
-  if (mi_count_size_overflow(count, size, &total)) return NULL;
-  return mi_heap_realloc(heap, p, total);
+fn mi_heap_reallocn(heap: TypedPointer<mi_heap_t>, p: Pointer, count: u64, size: u64) -> Pointer {
+  let mut total: u64;
+  if mi_count_size_overflow(count, size, &mut total) {
+    return null;
+  }
+  mi_heap_realloc(heap, p, total)
+}
+
+/// Reallocate but free `p` on errors
+fn mi_heap_reallocf(heap: TypedPointer<mi_heap_t>, p: Pointer, newsize: u64) -> Pointer {
+  let newp: Pointer = mi_heap_realloc(heap, p, newsize);
+  if newp == null && p != null {
+    mi_free(p);
+  }
+  newp
+}
+
+fn mi_heap_rezalloc(heap: TypedPointer<mi_heap_t>, p: Pointer, newsize: u64) -> Pointer {
+  _mi_heap_realloc_zero(heap, p, newsize, true)
+}
+
+fn mi_heap_recalloc(heap: TypedPointer<mi_heap_t>, p: Pointer, count: u64, size: u64) -> Pointer {
+  let mut total: u64;
+  if mi_count_size_overflow(count, size, &mut total) {
+    return null;
+  }
+  mi_heap_rezalloc(heap, p, total)
 }
 
 
-// Reallocate but free `p` on errors
-mi_decl_nodiscard void* mi_heap_reallocf(mi_heap_t* heap, void* p, size_t newsize) mi_attr_noexcept {
-  void* newp = mi_heap_realloc(heap, p, newsize);
-  if (newp==NULL && p!=NULL) mi_free(p);
-  return newp;
+fn mi_realloc(p: Pointer, newsize: u64) -> Pointer {
+  mi_heap_realloc(mi_get_default_heap(), p, newsize)
 }
 
-mi_decl_nodiscard void* mi_heap_rezalloc(mi_heap_t* heap, void* p, size_t newsize) mi_attr_noexcept {
-  return _mi_heap_realloc_zero(heap, p, newsize, true);
+fn mi_reallocn(p: Pointer, count: u64, size: u64) -> Pointer {
+  mi_heap_reallocn(mi_get_default_heap(), p, count, size)
 }
 
-mi_decl_nodiscard void* mi_heap_recalloc(mi_heap_t* heap, void* p, size_t count, size_t size) mi_attr_noexcept {
-  size_t total;
-  if (mi_count_size_overflow(count, size, &total)) return NULL;
-  return mi_heap_rezalloc(heap, p, total);
+/// Reallocate but free `p` on errors
+fn mi_reallocf(p: Pointer, newsize: u64) -> Pointer {
+  mi_heap_reallocf(mi_get_default_heap(), p, newsize)
 }
 
-
-mi_decl_nodiscard void* mi_realloc(void* p, size_t newsize) mi_attr_noexcept {
-  return mi_heap_realloc(mi_get_default_heap(),p,newsize);
+fn mi_rezalloc(p: Pointer, newsize: u64) -> Pointer {
+  mi_heap_rezalloc(mi_get_default_heap(), p, newsize)
 }
 
-mi_decl_nodiscard void* mi_reallocn(void* p, size_t count, size_t size) mi_attr_noexcept {
-  return mi_heap_reallocn(mi_get_default_heap(),p,count,size);
-}
-
-// Reallocate but free `p` on errors
-mi_decl_nodiscard void* mi_reallocf(void* p, size_t newsize) mi_attr_noexcept {
-  return mi_heap_reallocf(mi_get_default_heap(),p,newsize);
-}
-
-mi_decl_nodiscard void* mi_rezalloc(void* p, size_t newsize) mi_attr_noexcept {
-  return mi_heap_rezalloc(mi_get_default_heap(), p, newsize);
-}
-
-mi_decl_nodiscard void* mi_recalloc(void* p, size_t count, size_t size) mi_attr_noexcept {
-  return mi_heap_recalloc(mi_get_default_heap(), p, count, size);
+fn mi_recalloc(p: Pointer, count: u64, size: u64) -> Pointer {
+  mi_heap_recalloc(mi_get_default_heap(), p, count, size)
 }
 
 
@@ -852,36 +856,50 @@ mi_decl_nodiscard void* mi_recalloc(void* p, size_t count, size_t size) mi_attr_
 // ------------------------------------------------------
 
 // `strdup` using mi_malloc
-mi_decl_nodiscard mi_decl_restrict char* mi_heap_strdup(mi_heap_t* heap, const char* s) mi_attr_noexcept {
-  if (s == NULL) return NULL;
-  size_t n = strlen(s);
-  char* t = (char*)mi_heap_malloc(heap,n+1);
-  if (t == NULL) return NULL;
+fn mi_heap_strdup(heap: TypedPointer<mi_heap_t>, s: &str) -> TypedPointer<u8> {
+  if s == null {
+    return NULL;
+  }
+  let n: u64 = strlen(s);
+  let t: TypedPointer<u8>  = TypedPointer::from_address(mi_heap_malloc(heap, n + 1));
+  if t == null {
+    return NULL;
+  }
   _mi_memcpy(t, s, n);
   t[n] = 0;
-  return t;
+  t
 }
 
-mi_decl_nodiscard mi_decl_restrict char* mi_strdup(const char* s) mi_attr_noexcept {
-  return mi_heap_strdup(mi_get_default_heap(), s);
+fn mi_strdup(s: &str) -> TypedPointer<u8> {
+  mi_heap_strdup(mi_get_default_heap(), s)
 }
 
-// `strndup` using mi_malloc
-mi_decl_nodiscard mi_decl_restrict char* mi_heap_strndup(mi_heap_t* heap, const char* s, size_t n) mi_attr_noexcept {
-  if (s == NULL) return NULL;
-  const char* end = (const char*)memchr(s, 0, n);  // find end of string in the first `n` characters (returns NULL if not found)
-  const size_t m = (end != NULL ? (size_t)(end - s) : n);  // `m` is the minimum of `n` or the end-of-string
-  mi_assert_internal(m <= n);
-  char* t = (char*)mi_heap_malloc(heap, m+1);
-  if (t == NULL) return NULL;
+/// `strndup` using mi_malloc
+fn mi_heap_strndup(heap: TypedPointer<mi_heap_t>, s: &str, n: u64) -> Pointer<u8> {
+  if s == null {
+    return NULL;
+  }
+  let end: TypedPointer<u8> = TypedPointer::from_address(memchr(s, 0, n));  // find end of string in the first `n` characters (returns NULL if not found)
+  let m: u64 = if end != null { // `m` is the minimum of `n` or the end-of-string
+    (end - s) as u64
+  } else {
+    n
+  };
+  mi_assert_internal!(m <= n);
+  let t: TypedPointer<u8> = TypedPointer::from_address(mi_heap_malloc(heap, m+1));
+  if t == null {
+    return NULL;
+  }
   _mi_memcpy(t, s, m);
   t[m] = 0;
-  return t;
+  t
 }
 
-mi_decl_nodiscard mi_decl_restrict char* mi_strndup(const char* s, size_t n) mi_attr_noexcept {
-  return mi_heap_strndup(mi_get_default_heap(),s,n);
+fn mi_strndup(s: TypedPointer<u8>, n: u64) -> TypedPointer<u8> {
+  mi_heap_strndup(mi_get_default_heap(), s, n)
 }
+
+///////////////////////////////////////////////////////////////////////////////////////////////
 
 #ifndef __wasi__
 // `realpath` using mi_malloc
