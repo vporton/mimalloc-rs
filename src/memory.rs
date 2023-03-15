@@ -64,7 +64,7 @@ pub trait PagedMemory {
     const PAGE_SIZE_IN_BYTES: usize;
 }
 
-pub trait MemoryExt: Deref
+pub trait MemoryRef: Deref
     where Self::Target: Memory
 {
     fn write_value<T>(&self, offset: TypedAddress<Self::Target, T>, value: &T) {
@@ -87,14 +87,14 @@ pub trait MemoryExt: Deref
     }
 }
 
-struct Pointer<MR: MemoryExt>
+struct Pointer<MR: MemoryRef>
     where MR::Target: Memory
 {
     pub memory: MR,
     pub address: <MR::Target as Memory>::Address,
 }
 
-impl<MR: MemoryExt> Pointer<MR>
+impl<MR: MemoryRef> Pointer<MR>
     where MR::Target: Memory
 {
     pub fn new(memory: MR, address: <MR::Target as Memory>::Address) -> Self {
@@ -108,7 +108,7 @@ impl<MR: MemoryExt> Pointer<MR>
     }
 }
 
-impl<MR: MemoryExt> Pointer<MR>
+impl<MR: MemoryRef> Pointer<MR>
     where MR::Target: Memory
 {
     fn write(&self, value: &[u8]) {
@@ -119,14 +119,14 @@ impl<MR: MemoryExt> Pointer<MR>
     }
 }
 
-struct TypedPointer<MR: MemoryExt, T>
+struct TypedPointer<MR: MemoryRef, T>
     where MR::Target: Memory
 {
     pub memory: MR,
     pub address: TypedAddress<MR::Target, T>,
 }
 
-impl<T, MR: MemoryExt> TypedPointer<MR, T>
+impl<T, MR: MemoryRef> TypedPointer<MR, T>
     where MR::Target: Memory
 {
     pub fn new(memory: MR, address: TypedAddress<MR::Target, T>) -> Self {
@@ -140,13 +140,13 @@ impl<T, MR: MemoryExt> TypedPointer<MR, T>
     }
 }
 
-impl<T, MR: MemoryExt> Typed for TypedPointer<MR, T>
+impl<T, MR: MemoryRef> Typed for TypedPointer<MR, T>
     where MR::Target: Memory
 {
     type Type = T;
 }
 
-impl<T, MR: MemoryExt> TypedPointer<MR, T>
+impl<T, MR: MemoryRef> TypedPointer<MR, T>
     where MR::Target: Memory
 {
     fn write_value(&self, value: &T) {
