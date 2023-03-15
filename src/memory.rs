@@ -164,28 +164,40 @@ impl<T, MR: Deref> TypedPointer<T, MR>
 /// `write_field!(pointer=>field, value)`
 macro_rules! write_field {
     ($pointer:expr=>$field:ident,$value:expr) => {
-        $mem.write_value($pointer.byte_address() + offset_of!(<$addr::Type>::$field).as_u32() as usize, $value)
+        {
+            use offset::offset_of;
+            $mem.write_value($pointer.byte_address() + offset_of!(<$addr::Type>::$field).as_u32() as usize, $value)
+        }
     };
 }
 
 /// `read_field!(pointer=>field, pointer)`
 macro_rules! read_field {
     ($pointer:expr=>$field:ident,$to:expr) => {
-        $pointer.read_value($pointer.byte_address() + offset_of!(<$addr::Type>::$field).as_u32() as usize, $to)
+        {
+            use offset::offset_of;
+            $pointer.read_value($pointer.byte_address() + offset_of!(<$addr::Type>::$field).as_u32() as usize, $to)
+        }
     };
 }
 
 /// `return_field!(pointer=>field)`
 macro_rules! return_field {
     ($pointer:expr=>$field:ident) => {
-        $pointer.return_value($pointer.byte_address() + offset_of!(<$addr::Type>::$field).as_u32() as usize)
+        {
+            use offset::offset_of;
+            $pointer.return_value($pointer.byte_address() + offset_of!(<$pointer::Type>::$field).as_u32() as usize)
+        }
     };
 }
 
 /// `update_field!(pointer=>field, update)`
 macro_rules! update_field {
     ($pointer:expr=>$field:ident,$update:expr) => {
-        $pointer.update_value($addr + offset_of!(<$addr::Type>::$field).as_u32() as usize, update)
+        {
+            use offset::offset_of;
+            $pointer.update_value($pointer.byte_address() + offset_of!(<$pointer::Type>::$field).as_u32() as usize, update)
+        }
     };
 }
 
