@@ -12,12 +12,12 @@ terms of the MIT license. A copy of the license can be found in the file
 use std::mem::size_of;
 use std::ops::Deref;
 use std::ptr::null;
-use crate::memory::{return_field, write_field};
+use crate::memory::{return_field, TypedAddress, write_field};
 
 // Fast allocation in a page: just pop from the free list.
 // Fall back to generic allocation only if the list is empty.
 #[inline]
-pub fn _mi_page_malloc<MR: Deref>(memory: MR, heap: TypedAddress<mi_heap_t>, page: TypedAddress<mi_page_t>, size: u64, zero: bool) -> Address
+pub fn _mi_page_malloc<MR: Deref>(memory: MR, heap: TypedAddress<MR, mi_heap_t>, page: TypedAddress<MR, mi_page_t>, size: MR::Size, zero: bool) -> MR::Address
   where MR::Target: MemoryExt
 {
   let heap = TypedPointer::new(&*memory, heap);
@@ -42,7 +42,7 @@ pub fn _mi_page_malloc<MR: Deref>(memory: MR, heap: TypedAddress<mi_heap_t>, pag
   // zero the block? note: we need to zero the full block size (issue #63)
   if mi_unlikely(zero) {
     mi_assert_internal!(return_field!(page=>xblock_size) != 0); // do not call with zero'ing for huge blocks (see _mi_malloc_generic)
-    let zsize: u64 = if return_field!(page,mi_page_t=>is_zero) {
+    let zsize: MR::Size = if return_field!(page,mi_page_t=>is_zero) {
       size_of::<mi_block_t::mi_encoded_t>() + MI_PADDING_SIZE
     } else {
       return_field!(page,mi_page_t=>xblock_size)
@@ -61,13 +61,13 @@ pub fn _mi_page_malloc<MR: Deref>(memory: MR, heap: TypedAddress<mi_heap_t>, pag
 
   #[cfg(mi_stat)]
   {
-    let bsize: u64 = mi_page_usable_block_size(page);
+    let bsize: MR::Size = mi_page_usable_block_size(page);
     if bsize <= MI_MEDIUM_OBJ_SIZE_MAX {
       mi_heap_stat_increase(heap, normal, bsize);
       mi_heap_stat_counter_increase(heap, normal_count, 1);
       #[cfg(mi_stat_2)]
       {
-        let bin: u64 = _mi_bin(bsize);
+        let bin: MR::Size = _mi_bin(bsize);
         mi_heap_stat_increase(heap, normal_bins[bin], 1);
       }
     }
@@ -85,8 +85,8 @@ pub fn _mi_page_malloc<MR: Deref>(memory: MR, heap: TypedAddress<mi_heap_t>, pag
     write_value!(padding=>canary, mi_ptr_encode(page, block, return_field!(page=>keys)) as u32);
     write_value!(padding=>delta, delta as u32);
     if !mi_page_is_huge(page) {
-      let fill: Address = padding.byte_address().0 as i64 - delta;
-      let maxpad: u64 = min(delta, MI_MAX_ALIGN_SIZE); // set at most N initial padding bytes
+      let fill: MR::Address = padding.byte_address().0 as i64 - delta;
+      let maxpad: MR::Size = min(delta, MI_MAX_ALIGN_SIZE); // set at most N initial padding bytes
       for i in 0 .. maxpad {
         memory.write(fill.offset(i), &[MI_DEBUG_PADDING]); // TODO: may be slow
       }
@@ -97,21 +97,21 @@ pub fn _mi_page_malloc<MR: Deref>(memory: MR, heap: TypedAddress<mi_heap_t>, pag
 }
 
 #[inline]
-fn mi_heap_malloc_small_zero(heap: TypedPointer<mi_heap_t>, size: u64, zero: bool) -> Address {
+fn mi_heap_malloc_small_zero(heap: TypedPointer<mi_heap_t>, size: MR::Size, zero: bool) -> MR::Address {
   mi_assert!(heap != null);
   #[cfg(mi_debug)]
   {
-    let tid: u64 = _mi_thread_id();
+    let tid: MR::Size = _mi_thread_id();
     let our_tid = return_field!(heap=>thread_id);
     mi_assert(our_tid == 0 || our_tid == tid); // heaps are thread local
   }
   mi_assert!(size <= MI_SMALL_SIZE_MAX);
   #[cfg(mi_padding)]
   if size == 0 {
-    size = u64::size_of();
+    size = MR::Size::size_of();
   }
   let page: TypedPointer<mi_page_t> = _mi_heap_get_free_small_page(heap, size + MI_PADDING_SIZE);
-  let p: Address = _mi_page_malloc(heap, page, size + MI_PADDING_SIZE, zero);
+  let p: MR::Address = _mi_page_malloc(heap, page, size + MI_PADDING_SIZE, zero);
   mi_assert_internal!(p == null || mi_usable_size(p) >= size);
   #[cfg(mi_stat_2)]
   if p != null {
@@ -126,18 +126,18 @@ fn mi_heap_malloc_small_zero(heap: TypedPointer<mi_heap_t>, size: u64, zero: boo
 
 // allocate a small block
 #[inline]
-fn mi_heap_malloc_small(heap: TypedPointer<mi_heap_t>, size: u64) -> Address {
+fn mi_heap_malloc_small(heap: TypedPointer<mi_heap_t>, size: MR::Size) -> MR::Address {
   mi_heap_malloc_small_zero(heap, size, false)
 }
 
 #[inline]
-fn mi_malloc_small(size: u64) -> Address {
+fn mi_malloc_small(size: MR::Size) -> MR::Address {
   mi_heap_malloc_small(mi_get_default_heap(), size)
 }
 
 // The main allocation function
 #[inline]
-fn _mi_heap_malloc_zero_ex(heap: TypedPointer<mi_heap_t>, size: u64, zero: bool, huge_alignment: u64) -> Address {
+fn _mi_heap_malloc_zero_ex(heap: TypedPointer<mi_heap_t>, size: MR::Size, zero: bool, huge_alignment: MR::Size) -> MR::Address {
   if mi_likely(size <= MI_SMALL_SIZE_MAX) {
     mi_assert_internal!(huge_alignment == 0);
     return mi_heap_malloc_small_zero(heap, size, zero);
@@ -145,7 +145,7 @@ fn _mi_heap_malloc_zero_ex(heap: TypedPointer<mi_heap_t>, size: u64, zero: bool,
     mi_assert!(heap!=null);
     let thread_id = return_field!(heap,mi_heap_t=>thread_id);
     mi_assert(thread_id == 0 || thread_id == _mi_thread_id());   // heaps are thread local
-    let p: Address = _mi_malloc_generic(heap, size + MI_PADDING_SIZE, zero, huge_alignment);  // note: size can overflow but it is detected in malloc_generic
+    let p: MR::Address = _mi_malloc_generic(heap, size + MI_PADDING_SIZE, zero, huge_alignment);  // note: size can overflow but it is detected in malloc_generic
     mi_assert_internal!(p == null || mi_usable_size(p) >= size);
     #[cfg(mi_stat_2)]
     if p != null {
@@ -160,31 +160,31 @@ fn _mi_heap_malloc_zero_ex(heap: TypedPointer<mi_heap_t>, size: u64, zero: bool,
 }
 
 #[inline]
-fn _mi_heap_malloc_zero(heap: TypedPointer<mi_heap_t>, size: u64, zero: bool) -> Address {
+fn _mi_heap_malloc_zero(heap: TypedPointer<mi_heap_t>, size: MR::Size, zero: bool) -> MR::Address {
   _mi_heap_malloc_zero_ex(heap, size, zero, 0)
 }
 
 #[inline]
-fn mi_heap_malloc(heap: TypedPointer<mi_heap_t>, size: u64) -> Address {
+fn mi_heap_malloc(heap: TypedPointer<mi_heap_t>, size: MR::Size) -> MR::Address {
   _mi_heap_malloc_zero(heap, size, false)
 }
 
 #[inline]
-fn mi_malloc(size: u64) -> Address {
+fn mi_malloc(size: MR::Size) -> MR::Address {
   mi_heap_malloc(mi_get_default_heap(), size)
 }
 
 // zero initialized small block
-fn mi_zalloc_small(size: u64) -> Address {
+fn mi_zalloc_small(size: MR::Size) -> MR::Address {
   mi_heap_malloc_small_zero(mi_get_default_heap(), size, true)
 }
 
 #[inline]
-fn mi_heap_zalloc(heap: ZTypedAddress<mi_heap_t>, size: u64) -> Address {
+fn mi_heap_zalloc(heap: ZTypedAddress<mi_heap_t>, size: MR::Size) -> MR::Address {
   return _mi_heap_malloc_zero(heap, size, true);
 }
 
-fn mi_zalloc(size: u64) -> Address {
+fn mi_zalloc(size: MR::Size) -> MR::Address {
   return mi_heap_zalloc(mi_get_default_heap(), size);
 }
 
@@ -196,7 +196,7 @@ fn mi_zalloc(size: u64) -> Address {
 
 // linear check if the free list contains a specific element
 #[cfg(all(mi_encode_freelist, any(mi_secure_5, mi_debug)))]
-fn mi_list_contains<MR: Deref>(memory: MR, page: TypedAddress<mi_page_t>, list: TypedAddress<mi_block_t>, elem: TypedAddress<mi_block_t>) -> bool
+fn mi_list_contains<MR: Deref>(memory: MR, page: TypedAddress<MR, mi_page_t>, list: TypedAddress<MR, mi_block_t>, elem: TypedAddress<MR, mi_block_t>) -> bool
   where MR::Target: MemoryExt
 {
   while list != null {
@@ -209,7 +209,7 @@ fn mi_list_contains<MR: Deref>(memory: MR, page: TypedAddress<mi_page_t>, list: 
 }
 
 #[cfg(all(mi_encode_freelist, any(mi_secure_5, mi_debug)))]
-fn mi_check_is_double_freex<MR: Deref>(memory: MR, page: TypedAddress<mi_page_t>, block: TypedAddress<mi_block_t>) -> bool
+fn mi_check_is_double_freex<MR: Deref>(memory: MR, page: TypedAddress<MR, mi_page_t>, block: TypedAddress<MR, mi_block_t>) -> bool
   where MR::Target: MemoryExt
 {
   let page2 = TypedPointer::new(memory, page);
@@ -230,8 +230,8 @@ fn mi_check_is_double_freex<MR: Deref>(memory: MR, page: TypedAddress<mi_page_t>
 macro_rules! mi_track_page {
   ($page:expr,$access:ident) => {
     {
-      let mut psize: u64;
-      let pstart: Address = _mi_page_start(_mi_page_segment(page), page, &psize);
+      let mut psize: MR::Size;
+      let pstart: MR::Address = _mi_page_start(_mi_page_segment(page), page, &psize);
       concat_idents!(mi_track_mem_, access)(pstart, psize);
     }
   }
@@ -239,13 +239,13 @@ macro_rules! mi_track_page {
 
 #[cfg(all(mi_encode_freelist, any(mi_secure_5, mi_debug)))]
 #[inline]
-fn mi_check_is_double_free<MR: Deref>(memory: MR, page: TypedAddress<mi_page_t>, block: TypedAddress<mi_block_t>) -> bool
+fn mi_check_is_double_free<MR: Deref>(memory: MR, page: TypedAddress<MR, mi_page_t>, block: TypedAddress<MR, mi_block_t>) -> bool
   where MR::Target: MemoryExt
 {
   let page2 = TypedPointer::new(memory, page);
   let mut is_double_free = false;
   let n: TypedPointer<mi_block_t> = mi_block_nextx(memory, page, block, return_field!(page2=>keys)); // pretend it is freed, and get the decoded first field
-  if (n as u64 & (MI_INTPTR_SIZE-1)) == 0 &&  // quick check: aligned pointer?
+  if (n as MR::Size & (MI_INTPTR_SIZE-1)) == 0 &&  // quick check: aligned pointer?
       (n==null || mi_is_in_same_page(block, n)) // quick check: in same page or NULL?
   {
     // Suspicous: decoded value a in block is in the same page (or NULL) -- maybe a double free?
@@ -257,7 +257,7 @@ fn mi_check_is_double_free<MR: Deref>(memory: MR, page: TypedAddress<mi_page_t>,
 
 #[cfg(not(all(mi_encode_freelist, any(mi_secure_5, mi_debug))))]
 #[inline]
-fn mi_check_is_double_free<MR: Deref>(memory: MR, page: TypedAddress<mi_page_t>, block: TypedAddress<mi_block_t>) -> bool
+fn mi_check_is_double_free<MR: Deref>(memory: MR, page: TypedAddress<MR, mi_page_t>, block: TypedAddress<MR, mi_block_t>) -> bool
   where MR::Target: MemoryExt
 {
   MI_UNUSED!(page);
@@ -270,7 +270,7 @@ fn mi_check_is_double_free<MR: Deref>(memory: MR, page: TypedAddress<mi_page_t>,
 // ---------------------------------------------------------------------------
 
 #[cfg(all(mi_padding, mi_encode_freelist, not(mi_track_enabled)))]
-fn mi_page_decode_padding<MR: Deref>(memory: MR, page: TypedAddress<mi_page_t>, block: TypedAddress<mi_block_t>, delta: &mut u64, bsize: &mut u64) -> bool
+fn mi_page_decode_padding<MR: Deref>(memory: MR, page: TypedAddress<MR, mi_page_t>, block: TypedAddress<MR, mi_block_t>, delta: &mut MR::Size, bsize: &mut MR::Size) -> bool
   where MR::Target: MemoryExt
 {
   let page2 = TypedPointer::new(memory, page);
@@ -279,7 +279,7 @@ fn mi_page_decode_padding<MR: Deref>(memory: MR, page: TypedAddress<mi_page_t>, 
   mi_track_mem_defined(padding, size_of::<mi_padding_t>());
   *delta = return_field!(padding=>delta);
   let canary: u32 = return_field!(padding=>canary);
-  let keys: [u64; 2] = return_field!(page2=>keys);
+  let keys: [MR::Size; 2] = return_field!(page2=>keys);
   let ok = mi_ptr_encode(memory, page, block, &keys).byte_address() == canary && *delta <= *bsize;
   mi_track_mem_noaccess(padding, size_of::<mi_padding_t>());
   ok
@@ -287,11 +287,11 @@ fn mi_page_decode_padding<MR: Deref>(memory: MR, page: TypedAddress<mi_page_t>, 
 
 // Return the exact usable size of a block.
 #[cfg(all(mi_padding, mi_encode_freelist, not(mi_track_enabled)))]
-fn mi_page_usable_size_of<MR: Deref>(memory: MR, page: TypedAddress<mi_page_t>, block: TypedAddress<mi_block_t>) -> u64
+fn mi_page_usable_size_of<MR: Deref>(memory: MR, page: TypedAddress<MR, mi_page_t>, block: TypedAddress<MR, mi_block_t>) -> MR::Size
   where MR::Target: MemoryExt
 {
-  let mut bsize: u64;
-  let mut delta: u64;
+  let mut bsize: MR::Size;
+  let mut delta: MR::Size;
   let ok = mi_page_decode_padding(memory, page, block, &mut delta, &mut bsize);
   mi_assert_internal!(ok);
   mi_assert_internal!(delta <= bsize);
@@ -303,11 +303,11 @@ fn mi_page_usable_size_of<MR: Deref>(memory: MR, page: TypedAddress<mi_page_t>, 
 }
 
 #[cfg(all(mi_padding, mi_encode_freelist, not(mi_track_enabled)))]
-fn mi_verify_padding<MR: Deref>(memory: MR, page: TypedAddress<mi_page_t>, block: TypedAddress<mi_block_t>, size: &mut u64, wrong: &mut u64) -> bool
+fn mi_verify_padding<MR: Deref>(memory: MR, page: TypedAddress<MR, mi_page_t>, block: TypedAddress<MR, mi_block_t>, size: &mut MR::Size, wrong: &mut MR::Size) -> bool
   where MR::Target: MemoryExt
 {
-  let mut bsize: u64;
-  let mut delta: u64;
+  let mut bsize: MR::Size;
+  let mut delta: MR::Size;
   let ok: bool = mi_page_decode_padding(memory, page, block, &mut delta, &mut bsize);
   *size = *wrong = bsize;
   if !ok {
@@ -316,8 +316,8 @@ fn mi_verify_padding<MR: Deref>(memory: MR, page: TypedAddress<mi_page_t>, block
   mi_assert_internal!(bsize >= delta);
   *size = bsize - delta;
   if !mi_page_is_huge(TypedAddress::new(memory, page)) {
-    let fill: u64 = block.byte_address() + bsize - delta;
-    let maxpad: u64 = min(delta, MI_MAX_ALIGN_SIZE); // check at most the first N padding bytes
+    let fill: MR::Size = block.byte_address() + bsize - delta;
+    let maxpad: MR::Size = min(delta, MI_MAX_ALIGN_SIZE); // check at most the first N padding bytes
     mi_track_mem_defined(memory, fill, maxpad);
     for i in 0 .. maxpad {
       if fill[i] != MI_DEBUG_PADDING {
@@ -332,11 +332,11 @@ fn mi_verify_padding<MR: Deref>(memory: MR, page: TypedAddress<mi_page_t>, block
 }
 
 #[cfg(all(mi_padding, mi_encode_freelist, not(mi_track_enabled)))]
-fn mi_check_padding<MR: Deref>(memory: MR, page: TypedAddress<mi_page_t>, block: TypedAddress<mi_block_t>)
+fn mi_check_padding<MR: Deref>(memory: MR, page: TypedAddress<MR, mi_page_t>, block: TypedAddress<MR, mi_block_t>)
   where MR::Target: MemoryExt
 {
-  let mut size: u64;
-  let mut wrong: u64;
+  let mut size: MR::Size;
+  let mut wrong: MR::Size;
   if !mi_verify_padding(memory, page, block, &mut size, &mut wrong) {
     _mi_error_message!(EFAULT, "buffer overflow in heap block %p of size %zu: write after %zu bytes\n", block, size, wrong);
   }
@@ -347,11 +347,11 @@ fn mi_check_padding<MR: Deref>(memory: MR, page: TypedAddress<mi_page_t>, block:
 // contain the pointer for the delayed list, then shrink the padding (by decreasing delta)
 // so it will later not trigger an overflow error in `mi_free_block`.
 #[cfg(all(mi_padding, mi_encode_freelist, not(mi_track_enabled)))]
-fn mi_padding_shrink<MR: Deref>(memory: MR, page: TypedAddress<mi_page_t>, block: TypedAddress<mi_block_t>, min_size: u64)
+fn mi_padding_shrink<MR: Deref>(memory: MR, page: TypedAddress<MR, mi_page_t>, block: TypedAddress<MR, mi_block_t>, min_size: MR::Size)
   where MR::Target: MemoryExt
 {
-  let mut bsize: u64;
-  let mut delta: u64;
+  let mut bsize: MR::Size;
+  let mut delta: MR::Size;
   let ok = mi_page_decode_padding(memory, page, block, &mut delta, &mut bsize);
   mi_assert_internal!(ok);
   if !ok || bsize - delta >= min_size { // usually already enough space
@@ -361,41 +361,41 @@ fn mi_padding_shrink<MR: Deref>(memory: MR, page: TypedAddress<mi_page_t>, block
   if bsize < min_size { // should never happen // TODO: Add assert.
     return;
   };
-  let new_delta: u64 = bsize - min_size;
+  let new_delta: MR::Size = bsize - min_size;
   mi_assert_internal!(new_delta < bsize);
   let padding = TypedPointer::<mi_padding_t>::from_address(block.byte_address() + bsize);
   write_value!(padding=>delta, new_delta as u32);
 }
 
 #[cfg(not(all(mi_padding, mi_encode_freelist, not(mi_track_enabled))))]
-fn mi_check_padding<MR: Deref>(_memory: MR, _page: TypedAddress<mi_page_t>, _block: TypedAddress<mi_block_t>)
+fn mi_check_padding<MR: Deref>(_memory: MR, _page: TypedAddress<MR, mi_page_t>, _block: TypedAddress<MR, mi_block_t>)
   where MR::Target: MemoryExt
 {}
 
 #[cfg(not(all(mi_padding, mi_encode_freelist, not(mi_track_enabled))))]
-fn mi_page_usable_size_of<MR: Deref>(memory: MR, page: TypedAddress<mi_page_t>, _block: TypedAddress<mi_block_t>) -> u64
+fn mi_page_usable_size_of<MR: Deref>(memory: MR, page: TypedAddress<MR, mi_page_t>, _block: TypedAddress<MR, mi_block_t>) -> MR::Size
   where MR::Target: MemoryExt
 {
   mi_page_usable_block_size(TypedPointer::new(memory, page))
 }
 
 #[cfg(not(all(mi_padding, mi_encode_freelist, not(mi_track_enabled))))]
-fn mi_padding_shrink<MR: Deref>(_memory: MR, _page: TypedPointer<mi_page_t>, _block: TypedPointer<mi_block_t>, _min_size: u64)
+fn mi_padding_shrink<MR: Deref>(_memory: MR, _page: TypedPointer<mi_page_t>, _block: TypedPointer<mi_block_t>, _min_size: MR::Size)
   where MR::Target: MemoryExt
 {}
 
 // only maintain stats for smaller objects if requested
 #[cfg(mi_stat)]
-fn mi_stat_free<MR: Deref>(memory: MR, page: TypedAddress<mi_page_t>, block: TypedAddress<mi_block_t>)
+fn mi_stat_free<MR: Deref>(memory: MR, page: TypedAddress<MR, mi_page_t>, block: TypedAddress<MR, mi_block_t>)
   where MR::Target: MemoryExt
 {
   #[cfg(not(mi_stat_2))] // FIXME: Check applying to macro as block.
   MI_UNUSED!(block);
   let heap: TypedPointer<mi_heap_t> = mi_heap_get_default();
-  let bsize: u64 = mi_page_usable_block_size(TypedPointer(memory, page));
+  let bsize: MR::Size = mi_page_usable_block_size(TypedPointer(memory, page));
   #[cfg(mi_stat_2)]
   {
-    let usize: u64 = mi_page_usable_size_of(memory, page, block);
+    let usize: MR::Size = mi_page_usable_size_of(memory, page, block);
     mi_heap_stat_decrease(heap, malloc, usize);
   }
   if bsize <= MI_MEDIUM_OBJ_SIZE_MAX {
@@ -417,7 +417,7 @@ fn mi_stat_free(_memory: MR, _page: TypedPointer<mi_page_t>, _block: TypedPointe
 #[cfg(all(mi_huge_page_abandon, mi_stat))]
 fn mi_stat_huge_free(page: TypedPointer<mi_page_t>) {
   let heap: TypedPointer<mi_heap_t> = mi_heap_get_default();
-  let bsize: u64 = mi_page_block_size(page); // to match stats in `page.c:mi_page_huge_alloc`
+  let bsize: MR::Size = mi_page_block_size(page); // to match stats in `page.c:mi_page_huge_alloc`
   if bsize <= MI_LARGE_OBJ_SIZE_MAX {
     mi_heap_stat_decrease(heap, large, bsize);
   } else {
@@ -434,7 +434,7 @@ fn mi_stat_huge_free(_page: TypedPointer<mi_page_t>)
 // ------------------------------------------------------
 
 // multi-threaded free (or free in huge block if compiled with MI_HUGE_PAGE_ABANDON)
-fn _mi_free_block_mt<MR: Deref>(memory: MR, page: TypedAddress<mi_page_t>, block: TypedAddress<mi_block_t>)
+fn _mi_free_block_mt<MR: Deref>(memory: MR, page: TypedAddress<MR, mi_page_t>, block: TypedAddress<MR, mi_block_t>)
 {
   // The padding check may access the non-thread-owned page for the key values.
   // that is safe as these are constant and the page won't be freed (as the block is not freed yet).
@@ -519,7 +519,7 @@ fn _mi_free_block_mt<MR: Deref>(memory: MR, page: TypedAddress<mi_page_t>, block
 
 // regular free
 #[inline]
-fn _mi_free_block<MR: Deref>(memory: MR, page: TypedAddress<mi_page_t>, local: bool, block: TypedAddress<mi_block_t>)
+fn _mi_free_block<MR: Deref>(memory: MR, page: TypedAddress<MR, mi_page_t>, local: bool, block: TypedAddress<MR, mi_block_t>)
   where MR::Target: MemoryExt
 {
   // and push it on the free list
@@ -539,8 +539,8 @@ fn _mi_free_block<MR: Deref>(memory: MR, page: TypedAddress<mi_page_t>, local: b
       }
     }
     mi_block_set_next(memory, page, block, read_value!(page=>local_free));
-    write_value!(page2=>local_free, block);
-    update_value!(page2=>used, |x| x - 1);
+    write_field!(page2,mi_page_t=>local_free, block);
+    update_value!(page2,mi_page_t=>used, |x| x - 1);
     if mi_unlikely(mi_page_all_free(page2)) {
       _mi_page_retire(page2);
     } else if mi_unlikely(mi_page_is_in_full(page2)) {
@@ -552,16 +552,16 @@ fn _mi_free_block<MR: Deref>(memory: MR, page: TypedAddress<mi_page_t>, local: b
 }
 
 // Adjust a block that was allocated aligned, to the actual start of the block in the page.
-fn _mi_page_ptr_unalign<MR: Deref>(memory: MR, segment: TypedAddress<mi_segment_t>, page: TypedAddress<mi_page_t>, p: u64) -> TypedPointer<mi_block_t>
+fn _mi_page_ptr_unalign<MR: Deref>(memory: MR, segment: TypedAddress<MR, mi_segment_t>, page: TypedAddress<MR, mi_page_t>, p: MR::Size) -> TypedPointer<mi_block_t>
   where MR::Targert: MemoryExt
 {
   mi_assert_internal!(page!=null && p!=null);
-  let diff  : u64 = p - _mi_page_start(memory, segment, page, null);
-  let adjust: u64 = diff % mi_page_block_size(page);
+  let diff  : MR::Size = p - _mi_page_start(memory, segment, page, null);
+  let adjust: MR::Size = diff % mi_page_block_size(page);
   return TypedPointer::from_address(p - adjust);
 }
 
-fn _mi_free_generic<MR: Deref>(memory: MR, segment: TypedAddress<mi_segment_t>, page: TypedAddress<mi_page_t>, is_local: bool, p: u64)
+fn _mi_free_generic<MR: Deref>(memory: MR, segment: TypedAddress<MR, mi_segment_t>, page: TypedAddress<MR, mi_page_t>, is_local: bool, p: MR::Size)
   where MR::Targert: MemoryExt
 {
   let block: TypedPointer<mi_block_t> = if mi_page_has_aligned(page) {
@@ -683,18 +683,18 @@ fn _mi_free_delayed_block(block: TypedPointer<mi_block_t>) -> bool {
 }
 
 // Bytes available in a block
-fn mi_page_usable_aligned_size_of<MR: Deref>(memory: MR, segment: TypedAddress<mi_segment_t>, page: TypedAddress<mi_page_t>, p: Address) -> u64
+fn mi_page_usable_aligned_size_of<MR: Deref>(memory: MR, segment: TypedAddress<MR, mi_segment_t>, page: TypedAddress<MR, mi_page_t>, p: MR::Address) -> MR::Size
   where MR::Target: MemoryExt
 {
   let block: TypedPointer<mi_block_t> = _mi_page_ptr_unalign(memory, segment, page, p);
-  let size: u64 = mi_page_usable_size_of(memory, page, block.address);
+  let size: MR::Size = mi_page_usable_size_of(memory, page, block.address);
   let adjust: i64 = p.byte_address() as i64 - block.byte_address() as i64;
-  mi_assert_internal!(adjust >= 0 && adjust as u64 <= size);
+  mi_assert_internal!(adjust >= 0 && adjust as MR::Size <= size);
   size - adjust
 }
 
 #[inline]
-fn _mi_usable_size(p: Pointer, msg: &str) -> u64 {
+fn _mi_usable_size(p: Pointer, msg: &str) -> MR::Size {
   if p == null {
     return 0;
   }
@@ -709,7 +709,7 @@ fn _mi_usable_size(p: Pointer, msg: &str) -> u64 {
   }
 }
 
-fn mi_usable_size(p: Pointer) -> u64 {
+fn mi_usable_size(p: Pointer) -> MR::Size {
   _mi_usable_size(p, "mi_usable_size")
 }
 
@@ -718,52 +718,52 @@ fn mi_usable_size(p: Pointer) -> u64 {
 // Allocation extensions
 // ------------------------------------------------------
 
-fn mi_free_size(p: Pointer, size: u64) {
+fn mi_free_size(p: Pointer, size: MR::Size) {
   MI_UNUSED_RELEASE!(size);
   mi_assert(p == null || size <= _mi_usable_size(p,"mi_free_size"));
   mi_free(p);
 }
 
-fn mi_free_size_aligned(p: Pointer, size: u64, alignment: u64) {
+fn mi_free_size_aligned(p: Pointer, size: MR::Size, alignment: MR::Size) {
   MI_UNUSED_RELEASE!(alignment);
   mi_assert!(p.byte_address() % alignment == 0);
   mi_free_size(p, size);
 }
 
-fn mi_free_aligned(p: Pointer, alignment: u64) {
+fn mi_free_aligned(p: Pointer, alignment: MR::Size) {
   MI_UNUSED_RELEASE!(alignment);
   mi_assert!(p.byte_address() % alignment == 0);
   mi_free(p);
 }
 
 #[inline]
-fn mi_heap_calloc(heap: TypedPointer<mi_heap_t>, count: u64, size: u64) -> Address {
-  let mut total: u64;
+fn mi_heap_calloc(heap: TypedPointer<mi_heap_t>, count: MR::Size, size: MR::Size) -> MR::Address {
+  let mut total: MR::Size;
   if mi_count_size_overflow(count, size, &mut total) {
     return null;
   }
   mi_heap_zalloc(heap,total)
 }
 
-fn mi_calloc(count: u64, size: u64) -> Pointer {
+fn mi_calloc(count: MR::Size, size: MR::Size) -> Pointer {
   mi_heap_calloc(mi_get_default_heap(), count, size)
 }
 
 // Uninitialized `calloc`
-fn mi_heap_mallocn(heap: TypedPointer<mi_heap_t>, count: u64, size: u64) -> Pointer {
-  let mut total: u64;
+fn mi_heap_mallocn(heap: TypedPointer<mi_heap_t>, count: MR::Size, size: MR::Size) -> Pointer {
+  let mut total: MR::Size;
   if mi_count_size_overflow(count, size, &mut total) {
     return null;
   }
   mi_heap_malloc(heap, total)
 }
 
-fn mi_mallocn(count: u64, size: u64) -> Pointer {
+fn mi_mallocn(count: MR::Size, size: MR::Size) -> Pointer {
   mi_heap_mallocn(mi_get_default_heap(), count, size)
 }
 
 /// Expand (or shrink) in place (or fail)
-fn mi_expand(p: Pointer, newsize: u64) -> Pointer {
+fn mi_expand(p: Pointer, newsize: MR::Size) -> Pointer {
   #[cfg(mi_padding)]
   {
     // we do not shrink/expand with padding enabled
@@ -776,7 +776,7 @@ fn mi_expand(p: Pointer, newsize: u64) -> Pointer {
     if p == null {
       return null;
     }
-    let size: u64 = _mi_usable_size(p, "mi_expand");
+    let size: MR::Size = _mi_usable_size(p, "mi_expand");
     if newsize > size {
       return null;
     }
@@ -784,14 +784,14 @@ fn mi_expand(p: Pointer, newsize: u64) -> Pointer {
   }
 }
 
-fn _mi_heap_realloc_zero<MR: Deref>(memory: MR, heap: TypedAddress<mi_heap_t>, p: Address, newsize: u64, zero: bool) -> Pointer
+fn _mi_heap_realloc_zero<MR: Deref>(memory: MR, heap: TypedAddress<MR, mi_heap_t>, p: MR::Address, newsize: MR::Size, zero: bool) -> Pointer
   where MR::Target: MemoryExt
 {
   let p2 = Pointer::new(memory, p);
   // if p == NULL then behave as malloc.
   // else if size == 0 then reallocate to a zero-sized block (and don't return NULL, just as mi_malloc(0)).
   // (this means that returning NULL always indicates an error, and `p` will not have been freed in that case.)
-  let size: u64 = _mi_usable_size(p2,"mi_realloc"); // also works if p == NULL (with size 0)
+  let size: MR::Size = _mi_usable_size(p2,"mi_realloc"); // also works if p == NULL (with size 0)
   if mi_unlikely(newsize <= size && newsize >= (size / 2) && newsize > 0) {  // note: newsize must be > 0 or otherwise we return NULL for realloc(NULL,0)
     // todo: adjust potential padding to reflect the new size?
     mi_track_free_size(p2, size);
@@ -803,8 +803,8 @@ fn _mi_heap_realloc_zero<MR: Deref>(memory: MR, heap: TypedAddress<mi_heap_t>, p
   if mi_likely(newp != null) {
     if zero && newsize > size {
       // also set last word in the previous allocation to zero to ensure any padding is zero-initialized
-      let start: u64 = if size >= size_of::<u64>() {
-        size - size_of::<u64>()
+      let start: MR::Size = if size >= size_of::<MR::Size>() {
+        size - size_of::<MR::Size>()
       } else {
         0
       };
@@ -813,8 +813,8 @@ fn _mi_heap_realloc_zero<MR: Deref>(memory: MR, heap: TypedAddress<mi_heap_t>, p
       }
     }
     if mi_likely(p != null) {
-      if mi_likely(_mi_is_aligned(p, size_of::<u64>())) {  // a client may pass in an arbitrary pointer `p`..
-        let copysize: u64 = if newsize > size {
+      if mi_likely(_mi_is_aligned(p, size_of::<MR::Size>())) {  // a client may pass in an arbitrary pointer `p`..
+        let copysize: MR::Size = if newsize > size {
           size
         } else {
           newsize
@@ -828,16 +828,16 @@ fn _mi_heap_realloc_zero<MR: Deref>(memory: MR, heap: TypedAddress<mi_heap_t>, p
   newp
 }
 
-fn mi_heap_realloc<MR: Deref>(memory: MR, heap: TypedAddress<mi_heap_t>, p: Address, newsize: u64) -> Pointer
+fn mi_heap_realloc<MR: Deref>(memory: MR, heap: TypedAddress<MR, mi_heap_t>, p: MR::Address, newsize: MR::Size) -> Pointer
   where MR::Target: MemoryExt
 {
   _mi_heap_realloc_zero(memory, heap, p, newsize, false)
 }
 
-fn mi_heap_reallocn<MR: Deref>(memory: MR, heap: TypedAddress<mi_heap_t>, p: Address, count: u64, size: u64) -> Pointer
+fn mi_heap_reallocn<MR: Deref>(memory: MR, heap: TypedAddress<MR, mi_heap_t>, p: MR::Address, count: MR::Size, size: MR::Size) -> Pointer
   where MR::Target: MemoryExt
 {
-  let mut total: u64;
+  let mut total: MR::Size;
   if mi_count_size_overflow(count, size, &mut total) {
     return null;
   }
@@ -845,7 +845,7 @@ fn mi_heap_reallocn<MR: Deref>(memory: MR, heap: TypedAddress<mi_heap_t>, p: Add
 }
 
 /// Reallocate but free `p` on errors
-fn mi_heap_reallocf<MR: Deref>(memory: MR, heap: TypedAddress<mi_heap_t>, p: Address, newsize: u64) -> Pointer
+fn mi_heap_reallocf<MR: Deref>(memory: MR, heap: TypedAddress<MR, mi_heap_t>, p: MR::Address, newsize: MR::Size) -> Pointer
   where MR::Target: MemoryExt
 {
   let newp: Pointer = mi_heap_realloc(memory, heap, p, newsize);
@@ -855,14 +855,14 @@ fn mi_heap_reallocf<MR: Deref>(memory: MR, heap: TypedAddress<mi_heap_t>, p: Add
   newp
 }
 
-fn mi_heap_rezalloc<MR: Deref>(memory: MR, heap: TypedAddress<mi_heap_t>, p: Address, newsize: u64) -> Pointer
+fn mi_heap_rezalloc<MR: Deref>(memory: MR, heap: TypedAddress<MR, mi_heap_t>, p: MR::Address, newsize: MR::Size) -> Pointer
   where MR::Target: MemoryExt
 {
   _mi_heap_realloc_zero(memory, heap, p, newsize, true)
 }
 
-fn mi_heap_recalloc<MR: Deref>(memory: MR, heap: TypedAddress<mi_heap_t>, p: Address, count: u64, size: u64) -> Pointer {
-  let mut total: u64;
+fn mi_heap_recalloc<MR: Deref>(memory: MR, heap: TypedAddress<MR, mi_heap_t>, p: MR::Address, count: MR::Size, size: MR::Size) -> Pointer {
+  let mut total: MR::Size;
   if mi_count_size_overflow(count, size, &mut total) {
     return null;
   }
@@ -870,24 +870,24 @@ fn mi_heap_recalloc<MR: Deref>(memory: MR, heap: TypedAddress<mi_heap_t>, p: Add
 }
 
 
-fn mi_realloc(p: Pointer, newsize: u64) -> Pointer {
+fn mi_realloc(p: Pointer, newsize: MR::Size) -> Pointer {
   mi_heap_realloc(mi_get_default_heap(), p, newsize)
 }
 
-fn mi_reallocn(p: Pointer, count: u64, size: u64) -> Pointer {
+fn mi_reallocn(p: Pointer, count: MR::Size, size: MR::Size) -> Pointer {
   mi_heap_reallocn(mi_get_default_heap(), p, count, size)
 }
 
 /// Reallocate but free `p` on errors
-fn mi_reallocf(p: Pointer, newsize: u64) -> Pointer {
+fn mi_reallocf(p: Pointer, newsize: MR::Size) -> Pointer {
   mi_heap_reallocf(mi_get_default_heap(), p, newsize)
 }
 
-fn mi_rezalloc(p: Pointer, newsize: u64) -> Pointer {
+fn mi_rezalloc(p: Pointer, newsize: MR::Size) -> Pointer {
   mi_heap_rezalloc(mi_get_default_heap(), p, newsize)
 }
 
-fn mi_recalloc(p: Pointer, count: u64, size: u64) -> Pointer {
+fn mi_recalloc(p: Pointer, count: MR::Size, size: MR::Size) -> Pointer {
   mi_heap_recalloc(mi_get_default_heap(), p, count, size)
 }
 
@@ -902,7 +902,7 @@ fn mi_heap_strdup(heap: TypedPointer<mi_heap_t>, s: *const u8) -> TypedPointer<u
   if s == null {
     return NULL;
   }
-  let n: u64 = strlen(s);
+  let n: MR::Size = strlen(s);
   let t: TypedPointer<u8>  = TypedPointer::from_address(mi_heap_malloc(heap, n + 1));
   if t == null {
     return NULL;
@@ -917,13 +917,13 @@ fn mi_strdup(s: *const u8) -> TypedPointer<u8> {
 }
 
 /// `strndup` using mi_malloc
-fn mi_heap_strndup(heap: TypedPointer<mi_heap_t>, s: *const u8, n: u64) -> Pointer<u8> {
+fn mi_heap_strndup(heap: TypedPointer<mi_heap_t>, s: *const u8, n: MR::Size) -> Pointer<u8> {
   if s == null {
     return NULL;
   }
   let end: TypedPointer<u8> = TypedPointer::new(heap.memory, memchr(s, 0, n));  // find end of string in the first `n` characters (returns NULL if not found)
-  let m: u64 = if end != null { // `m` is the minimum of `n` or the end-of-string
-    (end - s) as u64
+  let m: MR::Size = if end != null { // `m` is the minimum of `n` or the end-of-string
+    (end - s) as MR::Size
   } else {
     n
   };
@@ -937,7 +937,7 @@ fn mi_heap_strndup(heap: TypedPointer<mi_heap_t>, s: *const u8, n: u64) -> Point
   t
 }
 
-fn mi_strndup(s: TypedPointer<u8>, n: u64) -> TypedPointer<u8> {
+fn mi_strndup(s: TypedPointer<u8>, n: MR::Size) -> TypedPointer<u8> {
   mi_heap_strndup(mi_get_default_heap(), s, n)
 }
 
