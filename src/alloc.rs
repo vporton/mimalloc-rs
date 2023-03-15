@@ -13,7 +13,7 @@ use std::fmt::Pointer;
 use std::mem::size_of;
 use std::ops::Deref;
 use std::ptr::null;
-use crate::memory::{MemoryRef, return_field, TypedAddress, write_field};
+use crate::memory::{MemoryRef, return_field, TypedAddress, update_field, write_field};
 
 // Fast allocation in a page: just pop from the free list.
 // Fall back to generic allocation only if the list is empty.
@@ -30,7 +30,7 @@ pub fn _mi_page_malloc<MR: Deref>(memory: MR, heap: TypedAddress<MR, mi_heap_t>,
   }
   mi_assert_internal!(block != null && _mi_ptr_page(block) == page);
   // pop from the free list
-  update_field!(page=>used, |x| x+1);
+  update_field!(page,mi_page_t=>used, |x| x+1);
   let free = mi_block_next(page, block);
   write_field!(page,mi_page_t=>free, free);
   mi_assert_internal(free == null || _mi_ptr_page(free) == page);

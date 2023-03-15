@@ -5,6 +5,8 @@ terms of the MIT license. A copy of the license can be found in the file
 "LICENSE" at the root of this distribution.
 -----------------------------------------------------------------------------*/
 
+use std::mem::size_of;
+
 // Minimal alignment necessary. On most platforms 16 bytes are needed
 // due to SSE registers for example. This must be at least `sizeof(void*)`
 // FIXME
@@ -14,23 +16,17 @@ const MI_MAX_ALIGN_SIZE: u64 = 16;   // sizeof(max_align_t)
 // Platform specific values
 // ------------------------------------------------------
 
-// #if (SIZE_MAX/2) > LONG_MAX
-// # define MI_ZU(x)  x##ULL
-// # define MI_ZI(x)  x##LL
-// #else
-// # define MI_ZU(x)  x##UL
-// # define MI_ZI(x)  x##L
-// #endif
+// FIXME: Should be in `Memory`, from `Address` type:
+const MI_INTPTR_SHIFT: usize = size_of::<u64>().ilog2();
+const MI_SIZE_SHIFT: usize = size_of::<u64>().ilog2();
+const MI_INTPTR_SIZE: usize = size_of::<u64>();
+const MI_SIZE_SIZE: usize = size_of::<u64>();
+const MI_INTPTR_BITS: usize = u64::BITS;
+const MI_SIZE_BITS: usize = u64::BITS;
 
-// TODO
-const MI_INTPTR_SIZE: u64 = 8;
-const MI_INTPTR_BITS: u64 = MI_INTPTR_SIZE * 8;
-const MI_SIZE_SIZE: u64 = 8;
-const MI_SIZE_BITS: u64 = MI_INTPTR_SIZE * 8;
-
-// #define MI_KiB     (MI_ZU(1024))
-// #define MI_MiB     (MI_KiB*MI_KiB)
-// #define MI_GiB     (MI_MiB*MI_KiB)
+const MI_KiB: u64 = 1024;
+const MI_MiB: u64 = MI_KiB*MI_KiB;
+const MI_GiB: u64 = MI_MiB*MI_KiB;
 
 
 // ------------------------------------------------------
@@ -39,52 +35,52 @@ const MI_SIZE_BITS: u64 = MI_INTPTR_SIZE * 8;
 
 // Main tuning parameters for segment and page sizes
 // Sizes for 64-bit (usually divide by two for 32-bit)
-#define MI_SEGMENT_SLICE_SHIFT            (13 + MI_INTPTR_SHIFT)         // 64KiB  (32KiB on 32-bit)
+const MI_SEGMENT_SLICE_SHIFT: usize = 13 + MI_INTPTR_SHIFT;         // 64KiB  (32KiB on 32-bit)
 
-#if MI_INTPTR_SIZE > 4
-#define MI_SEGMENT_SHIFT                  ( 9 + MI_SEGMENT_SLICE_SHIFT)  // 32MiB
-#else
-#define MI_SEGMENT_SHIFT                  ( 7 + MI_SEGMENT_SLICE_SHIFT)  // 4MiB on 32-bit
-#endif
+const MI_SEGMENT_SHIFT: usize = if MI_INTPTR_SIZE > 4 {
+  9 + MI_SEGMENT_SLICE_SHIFT)  // 32MiB
+} else {
+  7 + MI_SEGMENT_SLICE_SHIFT)  // 4MiB on 32-bit
+}
 
-#define MI_SMALL_PAGE_SHIFT               (MI_SEGMENT_SLICE_SHIFT)       // 64KiB
-#define MI_MEDIUM_PAGE_SHIFT              ( 3 + MI_SMALL_PAGE_SHIFT)     // 512KiB
+const MI_SMALL_PAGE_SHIFT: usize = MI_SEGMENT_SLICE_SHIFT;       // 64KiB
+const MI_MEDIUM_PAGE_SHIFT: usize = 3 + MI_SMALL_PAGE_SHIFT;     // 512KiB
 
 
 // Derived constants
-#define MI_SEGMENT_SIZE                   (MI_ZU(1)<<MI_SEGMENT_SHIFT)
-#define MI_SEGMENT_ALIGN                  MI_SEGMENT_SIZE
-#define MI_SEGMENT_MASK                   (MI_SEGMENT_ALIGN - 1)
-#define MI_SEGMENT_SLICE_SIZE             (MI_ZU(1)<< MI_SEGMENT_SLICE_SHIFT)
-#define MI_SLICES_PER_SEGMENT             (MI_SEGMENT_SIZE / MI_SEGMENT_SLICE_SIZE) // 1024
+const MI_SEGMENT_SIZE: usize = 1usize<<MI_SEGMENT_SHIFT;
+const MI_SEGMENT_ALIGN = MI_SEGMENT_SIZE;
+const MI_SEGMENT_MASK: usize = MI_SEGMENT_ALIGN - 1;
+const MI_SEGMENT_SLICE_SIZE: usize = 1usize << MI_SEGMENT_SLICE_SHIFT;
+const MI_SLICES_PER_SEGMENT: usize = MI_SEGMENT_SIZE / MI_SEGMENT_SLICE_SIZE; // 1024
 
-#define MI_SMALL_PAGE_SIZE                (MI_ZU(1)<<MI_SMALL_PAGE_SHIFT)
-#define MI_MEDIUM_PAGE_SIZE               (MI_ZU(1)<<MI_MEDIUM_PAGE_SHIFT)
+const MI_SMALL_PAGE_SIZE: usize = 1usize<<MI_SMALL_PAGE_SHIFT;
+const MI_MEDIUM_PAGE_SIZE: usize = 1usize<<MI_MEDIUM_PAGE_SHIFT;
 
-#define MI_SMALL_OBJ_SIZE_MAX             (MI_SMALL_PAGE_SIZE/4)   // 8KiB on 64-bit
-#define MI_MEDIUM_OBJ_SIZE_MAX            (MI_MEDIUM_PAGE_SIZE/4)  // 128KiB on 64-bit
-#define MI_MEDIUM_OBJ_WSIZE_MAX           (MI_MEDIUM_OBJ_SIZE_MAX/MI_INTPTR_SIZE)   
-#define MI_LARGE_OBJ_SIZE_MAX             (MI_SEGMENT_SIZE/2)      // 32MiB on 64-bit
-#define MI_LARGE_OBJ_WSIZE_MAX            (MI_LARGE_OBJ_SIZE_MAX/MI_INTPTR_SIZE)
+const MI_SMALL_OBJ_SIZE_MAX: usize = MI_SMALL_PAGE_SIZE/4;   // 8KiB on 64-bit
+const MI_MEDIUM_OBJ_SIZE_MAX: usize = MI_MEDIUM_PAGE_SIZE/4;  // 128KiB on 64-bit
+const MI_MEDIUM_OBJ_WSIZE_MAX: usize = MI_MEDIUM_OBJ_SIZE_MAX/MI_INTPTR_SIZE;
+const MI_LARGE_OBJ_SIZE_MAX: usize = MI_SEGMENT_SIZE/2;      // 32MiB on 64-bit
+const MI_LARGE_OBJ_WSIZE_MAX: usize = MI_LARGE_OBJ_SIZE_MAX/MI_INTPTR_SIZE;
 
 // Maximum number of size classes. (spaced exponentially in 12.5% increments)
-#define MI_BIN_HUGE  (73U)
+const MI_BIN_HUGE: usize = 73;
 
-#if (MI_MEDIUM_OBJ_WSIZE_MAX >= 655360)
-#error "mimalloc internal: define more bins"
-#endif
+const _unused1: () = if MI_MEDIUM_OBJ_WSIZE_MAX >= 655360 {
+  compile_error!("mimalloc internal: define more bins")
+};
 
 // Maximum slice offset (15)
-#define MI_MAX_SLICE_OFFSET               ((MI_ALIGNMENT_MAX / MI_SEGMENT_SLICE_SIZE) - 1)
+const MI_MAX_SLICE_OFFSET: usize = (MI_ALIGNMENT_MAX / MI_SEGMENT_SLICE_SIZE) - 1;
 
 // Used as a special value to encode block sizes in 32 bits.
-#define MI_HUGE_BLOCK_SIZE                ((uint32_t)(2*MI_GiB))
+const MI_HUGE_BLOCK_SIZE: u32 = (2*MI_GiB);
 
 // blocks up to this size are always allocated aligned
-#define MI_MAX_ALIGN_GUARANTEE            (8*MI_MAX_ALIGN_SIZE)  
+const MI_MAX_ALIGN_GUARANTEE: usize = 8*MI_MAX_ALIGN_SIZE;
 
 // Alignments over MI_ALIGNMENT_MAX are allocated in dedicated huge page segments 
-#define MI_ALIGNMENT_MAX                  (MI_SEGMENT_SIZE >> 1)  
+const MI_ALIGNMENT_MAX: usize = MI_SEGMENT_SIZE >> 1;
 
 
 // ------------------------------------------------------
@@ -93,50 +89,44 @@ const MI_SIZE_BITS: u64 = MI_INTPTR_SIZE * 8;
 
 // The free lists use encoded next fields
 // (Only actually encodes when MI_ENCODED_FREELIST is defined.)
-typedef uintptr_t  mi_encoded_t;
+type mi_encoded_t = u64; // FIXME: Use `Address` instead.
 
 // thread id's
-typedef size_t     mi_threadid_t;
+type mi_threadid_t = u64; // FIXME: Use `Size` instead.
 
 // free lists contain blocks
-typedef struct mi_block_s {
+struct mi_block_t {
   mi_encoded_t next;
-} mi_block_t;
+}
 
 
 // The delayed flags are used for efficient multi-threaded free-ing
-typedef enum mi_delayed_e {
+enum mi_delayed_t {
   MI_USE_DELAYED_FREE   = 0, // push on the owning heap thread delayed list
   MI_DELAYED_FREEING    = 1, // temporary: another thread is accessing the owning heap
   MI_NO_DELAYED_FREE    = 2, // optimize: push on page local thread free queue if another block is already in the heap thread delayed free list
-  MI_NEVER_DELAYED_FREE = 3  // sticky, only resets on page reclaim
-} mi_delayed_t;
+  MI_NEVER_DELAYED_FREE = 3, // sticky, only resets on page reclaim
+};
 
 
 // The `in_full` and `has_aligned` page flags are put in a union to efficiently
 // test if both are false (`full_aligned == 0`) in the `mi_free` routine.
-#if !MI_TSAN
-typedef union mi_page_flags_s {
-  uint8_t full_aligned;
-  struct {
-    uint8_t in_full : 1;
-    uint8_t has_aligned : 1;
-  } x;
-} mi_page_flags_t;
-#else
-// under thread sanitizer, use a byte for each flag to suppress warning, issue #130
-typedef union mi_page_flags_s {
-  uint16_t full_aligned;
-  struct {
-    uint8_t in_full;
-    uint8_t has_aligned;
-  } x;
-} mi_page_flags_t;
-#endif
+bitflags! {
+    struct MyFlags: u8 {
+        const in_full = 1<<0;
+        const has_aligned = 1<<1;
+    }
+}
+
+// TODO
+union mi_page_flags_t {
+  pub full_aligned: u8,
+  pub x: MyFlags,
+}
 
 // Thread free list.
 // We use the bottom 2 bits of the pointer for mi_delayed_t flags
-typedef uintptr_t mi_thread_free_t;
+type mi_thread_free_t = u64;
 
 // A page contains blocks of one specific size (`block_size`).
 // Each page has three list of free blocks:

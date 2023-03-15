@@ -30,6 +30,8 @@ mi_encode_freelist = []
 # `mi_heap_destroy`. We therefore instead reset/decommit the huge blocks if freed from
 # another thread so most memory is available until it gets properly freed by the owning thread.
 mi_huge_page_abandon = []
+# thread sanitizer
+mi_tsan = []
 
 [dependencies]
 ic-cdk = "0.8.0-beta.0"
@@ -38,3 +40,4 @@ derive-new = "0.5"
 derive_more = "0.99.17"
 singleton-trait = "0.4.0" # TODO: needed?
 num-traits = "0.2.15"
+bitflags = "2.0.0"

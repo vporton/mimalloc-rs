@@ -3,10 +3,11 @@ In this fork, going to port mimalloc to pure Rust.
 Based on commit [dd73480](https://github.com/microsoft/mimalloc/tree/dd7348066fe40e8bf372fa4e9538910a5e24a75f)
 of mimalloc.
 
+TODO: Add `#[repr(C, packed)]`.
+
 FIXME: `null` is wrong everywhere. Check what is inline and what not.
 
-TODO: When more than one `Pointer` is passed to a function, it
-is more efficient to use `Memory` + `TypedAddress`.
+TODO: Remove alignments and threads.
 
 ```
 #if MI_PADDING
