@@ -6,6 +6,7 @@ terms of the MIT license. A copy of the license can be found in the file
 -----------------------------------------------------------------------------*/
 
 use std::mem::size_of;
+use c2rust_bitfields::BitfieldStruct;
 
 // Minimal alignment necessary. On most platforms 16 bytes are needed
 // due to SSE registers for example. This must be at least `sizeof(void*)`
@@ -111,18 +112,11 @@ enum mi_delayed_t {
 
 // The `in_full` and `has_aligned` page flags are put in a union to efficiently
 // test if both are false (`full_aligned == 0`) in the `mi_free` routine.
-bitflags! {
-    struct MyFlags: u8 {
-        const in_full = 1<<0;
-        const has_aligned = 1<<1;
-    }
-}
-
 // TODO
-union mi_page_flags_t {
-  pub full_aligned: u8,
-  pub x: MyFlags,
-}
+// union mi_page_flags_t {
+//   pub full_aligned: u8,
+//   pub x: mi_page_flags_bits_t,
+// }
 
 // Thread free list.
 // We use the bottom 2 bits of the pointer for mi_delayed_t flags
@@ -160,30 +154,37 @@ type mi_thread_free_t = u64;
 //   at least one block that will be added, or as already been added, to
 //   the owning heap `thread_delayed_free` list. This guarantees that pages
 //   will be freed correctly even if only other threads free blocks.
-typedef struct mi_page_s {
+#[derive(BitfieldStruct)]
+struct mi_page_flags_t {
+  #[bitfield(name = "is_reset", ty = "bool", bits = "0..=0")] // `true` if the page memory was reset
+  #[bitfield(name = "is_committed", ty = "bool", bits = "1..=1")] // `true` if the page virtual memory is committed
+  #[bitfield(name = "is_zero_init", ty = "bool", bits = "2..=2")] // `true` if the page was zero initialized
+  #[bitfield(name = "is_zero", ty = "bool", bits = "3..=3")] // `true` if the blocks in the free list are zero initialized
+  #[bitfield(name = "in_full", ty = "bool", bits = "4..=4")]
+  #[bitfield(name = "has_aligned", ty = "bool", bits = "5..=5")]
+  bits: [u8; 1],
+}
+
+struct mi_page_t {
+  bits: mi_page_flags_bits_t,
   // "owned" by the segment
-  uint32_t              slice_count;       // slices in this page (0 if not a page)
-  uint32_t              slice_offset;      // distance from the actual page data slice (0 if a page)
-  uint8_t               is_reset : 1;      // `true` if the page memory was reset
-  uint8_t               is_committed : 1;  // `true` if the page virtual memory is committed
-  uint8_t               is_zero_init : 1;  // `true` if the page was zero initialized
+  slice_count: u32,       // slices in this page (0 if not a page)
+  slice_offset: u32,      // distance from the actual page data slice (0 if a page)
 
   // layout like this to optimize access in `mi_malloc` and `mi_free`
-  uint16_t              capacity;          // number of blocks committed, must be the first field, see `segment.c:page_clear`
-  uint16_t              reserved;          // number of blocks reserved in memory
-  mi_page_flags_t       flags;             // `in_full` and `has_aligned` flags (8 bits)
-  uint8_t               is_zero : 1;       // `true` if the blocks in the free list are zero initialized
-  uint8_t               retire_expire : 7; // expiration count for retired blocks
+  capacity: u16,          // number of blocks committed, must be the first field, see `segment.c:page_clear`
+  reserved: u16,          // number of blocks reserved in memory
+  retire_expire: u8, // expiration count for retired blocks (in C code it was 7-bit bitfield)
 
-  mi_block_t*           free;              // list of available free blocks (`malloc` allocates from this list)
-  uint32_t              used;              // number of blocks in use (including blocks in `local_free` and `thread_free`)
-  uint32_t              xblock_size;       // size available in each block (always `>0`)
-  mi_block_t*           local_free;        // list of deferred free blocks by this thread (migrates to `free`)
+  free: Address<mi_block_t>,              // list of available free blocks (`malloc` allocates from this list)
+  used: u32,              // number of blocks in use (including blocks in `local_free` and `thread_free`)
+  xblock_size: u32,       // size available in each block (always `>0`)
+  local_free: Address<mi_block_t>,        // list of deferred free blocks by this thread (migrates to `free`)
 
-  #ifdef MI_ENCODE_FREELIST
-  uintptr_t             keys[2];           // two random keys to encode the free lists (see `_mi_block_next`)
-  #endif
+  #[cfg(mi_encode_freelist)]
+  keys: [u64; 2],           // two random keys to encode the free lists (see `_mi_block_next`)
 
+////////////////////////////////////////////////////////////////////////////////////////////////////
   _Atomic(mi_thread_free_t) xthread_free;  // list of deferred free blocks freed by other threads
   _Atomic(uintptr_t)        xheap;
 
@@ -194,7 +195,7 @@ typedef struct mi_page_s {
   #if MI_INTPTR_SIZE==8
   uintptr_t padding[1];
   #endif
-} mi_page_t;
+} ;
 
 
 

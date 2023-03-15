@@ -40,4 +40,4 @@ derive-new = "0.5"
 derive_more = "0.99.17"
 singleton-trait = "0.4.0" # TODO: needed?
 num-traits = "0.2.15"
-bitflags = "2.0.0"
+c2rust-bitfields = "0.17.0"
