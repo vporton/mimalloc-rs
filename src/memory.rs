@@ -87,14 +87,14 @@ pub trait MemoryExt: Deref
     }
 }
 
-struct Pointer<MR: Deref>
+struct Pointer<MR: MemoryExt>
     where MR::Target: Memory
 {
     pub memory: MR,
     pub address: <MR::Target as Memory>::Address,
 }
 
-impl<MR: Deref> Pointer<MR>
+impl<MR: MemoryExt> Pointer<MR>
     where MR::Target: Memory
 {
     pub fn new(memory: MR, address: <MR::Target as Memory>::Address) -> Self {
@@ -108,7 +108,7 @@ impl<MR: Deref> Pointer<MR>
     }
 }
 
-impl<MR: Deref> Pointer<MR>
+impl<MR: MemoryExt> Pointer<MR>
     where MR::Target: Memory
 {
     fn write(&self, value: &[u8]) {
@@ -119,14 +119,14 @@ impl<MR: Deref> Pointer<MR>
     }
 }
 
-struct TypedPointer<MR: Deref, T>
+struct TypedPointer<MR: MemoryExt, T>
     where MR::Target: Memory
 {
     pub memory: MR,
     pub address: TypedAddress<MR::Target, T>,
 }
 
-impl<T, MR: Deref> TypedPointer<MR, T>
+impl<T, MR: MemoryExt> TypedPointer<MR, T>
     where MR::Target: Memory
 {
     pub fn new(memory: MR, address: TypedAddress<MR::Target, T>) -> Self {
@@ -140,13 +140,13 @@ impl<T, MR: Deref> TypedPointer<MR, T>
     }
 }
 
-impl<T, MR: Deref> Typed for TypedPointer<MR, T>
+impl<T, MR: MemoryExt> Typed for TypedPointer<MR, T>
     where MR::Target: Memory
 {
     type Type = T;
 }
 
-impl<T, MR: Deref> TypedPointer<MR, T>
+impl<T, MR: MemoryExt> TypedPointer<MR, T>
     where MR::Target: Memory
 {
     fn write_value(&self, value: &T) {
