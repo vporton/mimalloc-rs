@@ -9,10 +9,11 @@ terms of the MIT license. A copy of the license can be found in the file
 // Allocation
 // ------------------------------------------------------
 
+use std::fmt::Pointer;
 use std::mem::size_of;
 use std::ops::Deref;
 use std::ptr::null;
-use crate::memory::{return_field, TypedAddress, write_field};
+use crate::memory::{MemoryRef, return_field, TypedAddress, write_field};
 
 // Fast allocation in a page: just pop from the free list.
 // Fall back to generic allocation only if the list is empty.
@@ -616,13 +617,13 @@ fn mi_checked_ptr_segment(p: Pointer, msg: &str) -> TypedPointer<mi_segment_t>
 
 // Free a block
 // fast path written carefully to prevent spilling on the stack
-fn mi_free(p: Pointer) {
+fn mi_free<MR: MemoryRef>(p: Pointer<MR>) {
   if mi_unlikely(p == null) {
     return;
   }
-  let segment: TypedPointer<mi_segment_t> = mi_checked_ptr_segment(p,"mi_free");
+  let segment: TypedPointer<MR, mi_segment_t> = mi_checked_ptr_segment(p,"mi_free");
   let is_local= _mi_thread_id() == mi_atomic_load_relaxed(&return_field!(segment,mi_segment_t=>thread_id));
-  let page: TypedPointer<mi_page_t> = _mi_segment_page_of(segment, p);
+  let page: TypedPointer<MR, mi_page_t> = _mi_segment_page_of(segment, p);
 
   if mi_likely(is_local) {                       // thread-local free?
     if mi_likely(return_field!(page,mi_page_t=>flags).full_aligned == 0)  // and it is not a full page (full pages need to move from the full bin), nor has aligned blocks (aligned blocks need to be unaligned)
