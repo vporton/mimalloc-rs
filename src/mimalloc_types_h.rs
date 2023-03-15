@@ -246,39 +246,40 @@ type mi_msecs_t = int64_t;
 // Segments are large allocated memory blocks (8mb on 64 bit) from
 // the OS. Inside segments we allocated fixed size _pages_ that
 // contain blocks.
-typedef struct mi_segment_s {
-  size_t            memid;              // memory id for arena allocation
-  bool              mem_is_pinned;      // `true` if we cannot decommit/reset/protect in this memory (i.e. when allocated using large OS pages)    
-  bool              mem_is_large;       // in large/huge os pages?
-  bool              mem_is_committed;   // `true` if the whole segment is eagerly committed
-  size_t            mem_alignment;      // page alignment for huge pages (only used for alignment > MI_ALIGNMENT_MAX)
-  size_t            mem_align_offset;   // offset for huge page alignment (only used for alignment > MI_ALIGNMENT_MAX)
+// TODO: Make bools bitfields? (not important because of large block size)
+struct mi_segment_t {
+  memid: u64,              // memory id for arena allocation
+  mem_is_pinned: bool,      // `true` if we cannot decommit/reset/protect in this memory (i.e. when allocated using large OS pages)
+  mem_is_large: bool,       // in large/huge os pages?
+  mem_is_committed: bool,   // `true` if the whole segment is eagerly committed
+  mem_alignment: u64,      // page alignment for huge pages (only used for alignment > MI_ALIGNMENT_MAX)
+  mem_align_offset: u64,   // offset for huge page alignment (only used for alignment > MI_ALIGNMENT_MAX)
 
-  bool              allow_decommit;     
-  mi_msecs_t        decommit_expire;
-  mi_commit_mask_t  decommit_mask;
-  mi_commit_mask_t  commit_mask;
+  allow_decommit: bool,
+  decommit_expire: mi_msecs_t,
+  decommit_mask: mi_commit_mask_t,
+  commit_mask: mi_commit_mask_t,
 
-  _Atomic(struct mi_segment_s*) abandoned_next;
+  abandoned_next: TypedAtomicAddress<mi_segment_s>,
 
   // from here is zero initialized
-  struct mi_segment_s* next;            // the list of freed segments in the cache (must be first field, see `segment.c:mi_segment_init`)
+  next: TypedAddress<mi_segment_s>,            // the list of freed segments in the cache (must be first field, see `segment.c:mi_segment_init`)
   
-  size_t            abandoned;          // abandoned pages (i.e. the original owning thread stopped) (`abandoned <= used`)
-  size_t            abandoned_visits;   // count how often this segment is visited in the abandoned list (to force reclaim it it is too long)
-  size_t            used;               // count of pages in use
-  uintptr_t         cookie;             // verify addresses in debug mode: `mi_ptr_cookie(segment) == segment->cookie`  
+  abandoned: u64,          // abandoned pages (i.e. the original owning thread stopped) (`abandoned <= used`)
+  abandoned_visits: u64,   // count how often this segment is visited in the abandoned list (to force reclaim it it is too long)
+  used: u64,               // count of pages in use
+  cookie: Address,             // verify addresses in debug mode: `mi_ptr_cookie(segment) == segment->cookie` // TODO: Remove in non-debug?
 
-  size_t            segment_slices;      // for huge segments this may be different from `MI_SLICES_PER_SEGMENT`
-  size_t            segment_info_slices; // initial slices we are using segment info and possible guard pages.
+  segment_slices: u64,      // for huge segments this may be different from `MI_SLICES_PER_SEGMENT`
+  segment_info_slices: u64, // initial slices we are using segment info and possible guard pages.
 
   // layout like this to optimize access in `mi_free`
-  mi_segment_kind_t kind;
-  size_t            slice_entries;       // entries in the `slices` array, at most `MI_SLICES_PER_SEGMENT`
-  _Atomic(mi_threadid_t) thread_id;      // unique id of the thread owning this segment
+  kind: mi_segment_kind_t,
+  slice_entries: u64,       // entries in the `slices` array, at most `MI_SLICES_PER_SEGMENT`
+  thread_id: AtomicU64,      // unique id of the thread owning this segment // FIXME
 
-  mi_slice_t        slices[MI_SLICES_PER_SEGMENT+1];  // one more for huge blocks with large alignment
-} mi_segment_t;
+  slices: [mi_slice_t; MI_SLICES_PER_SEGMENT+1];  // one more for huge blocks with large alignment
+}
 
 
 // ------------------------------------------------------
@@ -295,24 +296,24 @@ typedef struct mi_segment_s {
 // ------------------------------------------------------
 
 // Thread local data
-typedef struct mi_tld_s mi_tld_t;
+struct mi_tld_t;
 
 // Pages of a certain block size are held in a queue.
 typedef struct mi_page_queue_s {
-  mi_page_t* first;
-  mi_page_t* last;
-  size_t     block_size;
+  first: TypedAddress<mi_page_t>,
+  last: TypedAddress<mi_page_t>,
+  block_size: u64,
 } mi_page_queue_t;
 
-#define MI_BIN_FULL  (MI_BIN_HUGE+1)
+const MI_BIN_FULL: u64 = MI_BIN_HUGE+1;
 
 // Random context
-typedef struct mi_random_cxt_s {
-  uint32_t input[16];
-  uint32_t output[16];
-  int      output_available;
-  bool     weak;
-} mi_random_ctx_t;
+typedef struct mi_random_cxt_t {
+  input: [u32; 16],
+  output: [u32; 16],
+  output_available: i64, // FIXME: Which type?
+  weak: bool,
+}
 
 
 // In debug mode there is a padding structure at the end of the blocks to check for buffer overflows
