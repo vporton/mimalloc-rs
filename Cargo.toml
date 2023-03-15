@@ -6,9 +6,35 @@ authors = ["Victor Porton"]
 repository = "git@github.com:vporton/mimalloc-rs.git"
 description = "Ongoing port of mimalloc to pure Rust with support of Internet Computer"
 
+[features]
+mi_valgrind = ["mi_padding"] # Define MI_VALGRIND to enable valgrind support # TODO: needed?
+mi_stat = [] # maintain statistics
+mi_stat_2 = ["mi_stat"] # have detailed statistics (but costs some performance)
+# enable security mitigations:
+mi_secure = [] # guard page around metadata
+mi_secure_2 = ["mi_secure"] # guard page around each mimalloc page
+mi_secure_3 = ["mi_secure_2", "mi_encode_freelist"] # encode free lists (detect corrupted free list (buffer overflow), and invalid pointer free)
+mi_secure_4 = ["mi_secure_3"] # checks for double free. (may be more expensive)
+# debug mode:
+mi_debug = ["mi_padding", "mi_encode_freelist"] # basic assertion checks and statistics, check double free, corrupted free list, and invalid pointer free.
+mi_debug_2 = ["mi_debug"] # + internal assertion checks
+mi_debug_3 = ["mi_debug_2"] # + extensive internal invariant checking
+# Reserve extra padding at the end of each block to be more resilient against heap block overflows.
+# The padding can detect byte-precise buffer overflow on free.
+mi_padding = []
+# Encoded free lists allow detection of corrupted free lists
+# and can detect buffer overflows, modify after free, and double `free`s.
+mi_encode_freelist = []
+# We used to abandon huge pages but to eagerly deallocate if freed from another thread,
+# but that makes it not possible to visit them during a heap walk or include them in a
+# `mi_heap_destroy`. We therefore instead reset/decommit the huge blocks if freed from
+# another thread so most memory is available until it gets properly freed by the owning thread.
+mi_huge_page_abandon = []
+
 [dependencies]
 ic-cdk = "0.8.0-beta.0"
 offset = "0.1.4"
 derive-new = "0.5"
 derive_more = "0.99.17"
-singleton-trait = "0.4.0"
+singleton-trait = "0.4.0" # TODO: needed?
+num-traits = "0.2.15"

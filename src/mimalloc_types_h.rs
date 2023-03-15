@@ -4,133 +4,33 @@ This is free software; you can redistribute it and/or modify it under the
 terms of the MIT license. A copy of the license can be found in the file
 "LICENSE" at the root of this distribution.
 -----------------------------------------------------------------------------*/
-#pragma once
-#ifndef MIMALLOC_TYPES_H
-#define MIMALLOC_TYPES_H
-
-#include <stddef.h>   // ptrdiff_t
-#include <stdint.h>   // uintptr_t, uint16_t, etc
-#include "mimalloc-atomic.h"  // _Atomic
-
-#ifdef _MSC_VER
-#pragma warning(disable:4214) // bitfield is not int
-#endif
 
 // Minimal alignment necessary. On most platforms 16 bytes are needed
 // due to SSE registers for example. This must be at least `sizeof(void*)`
-#ifndef MI_MAX_ALIGN_SIZE
-#define MI_MAX_ALIGN_SIZE  16   // sizeof(max_align_t)
-#endif
-
-// ------------------------------------------------------
-// Variants
-// ------------------------------------------------------
-
-// Define NDEBUG in the release version to disable assertions.
-// #define NDEBUG
-
-// Define MI_VALGRIND to enable valgrind support
-// #define MI_VALGRIND 1
-
-// Define MI_STAT as 1 to maintain statistics; set it to 2 to have detailed statistics (but costs some performance).
-// #define MI_STAT 1
-
-// Define MI_SECURE to enable security mitigations
-// #define MI_SECURE 1  // guard page around metadata
-// #define MI_SECURE 2  // guard page around each mimalloc page
-// #define MI_SECURE 3  // encode free lists (detect corrupted free list (buffer overflow), and invalid pointer free)
-// #define MI_SECURE 4  // checks for double free. (may be more expensive)
-
-#if !defined(MI_SECURE)
-#define MI_SECURE 0
-#endif
-
-// Define MI_DEBUG for debug mode
-// #define MI_DEBUG 1  // basic assertion checks and statistics, check double free, corrupted free list, and invalid pointer free.
-// #define MI_DEBUG 2  // + internal assertion checks
-// #define MI_DEBUG 3  // + extensive internal invariant checking (cmake -DMI_DEBUG_FULL=ON)
-#if !defined(MI_DEBUG)
-#if !defined(NDEBUG) || defined(_DEBUG)
-#define MI_DEBUG 2
-#else
-#define MI_DEBUG 0
-#endif
-#endif
-
-// Reserve extra padding at the end of each block to be more resilient against heap block overflows.
-// The padding can detect byte-precise buffer overflow on free.
-#if !defined(MI_PADDING) && (MI_DEBUG>=1 || MI_VALGRIND)
-#define MI_PADDING  1
-#endif
-
-
-// Encoded free lists allow detection of corrupted free lists
-// and can detect buffer overflows, modify after free, and double `free`s.
-#if (MI_SECURE>=3 || MI_DEBUG>=1)
-#define MI_ENCODE_FREELIST  1
-#endif
-
-
-// We used to abandon huge pages but to eagerly deallocate if freed from another thread,
-// but that makes it not possible to visit them during a heap walk or include them in a
-// `mi_heap_destroy`. We therefore instead reset/decommit the huge blocks if freed from
-// another thread so most memory is available until it gets properly freed by the owning thread.
-// #define MI_HUGE_PAGE_ABANDON 1
-
+// FIXME
+const MI_MAX_ALIGN_SIZE: u64 = 16;   // sizeof(max_align_t)
 
 // ------------------------------------------------------
 // Platform specific values
 // ------------------------------------------------------
 
-// ------------------------------------------------------
-// Size of a pointer.
-// We assume that `sizeof(void*)==sizeof(intptr_t)`
-// and it holds for all platforms we know of.
-//
-// However, the C standard only requires that:
-//  p == (void*)((intptr_t)p))
-// but we also need:
-//  i == (intptr_t)((void*)i)
-// or otherwise one might define an intptr_t type that is larger than a pointer...
-// ------------------------------------------------------
+// #if (SIZE_MAX/2) > LONG_MAX
+// # define MI_ZU(x)  x##ULL
+// # define MI_ZI(x)  x##LL
+// #else
+// # define MI_ZU(x)  x##UL
+// # define MI_ZI(x)  x##L
+// #endif
 
-#if INTPTR_MAX > INT64_MAX
-# define MI_INTPTR_SHIFT (4)  // assume 128-bit  (as on arm CHERI for example)
-#elif INTPTR_MAX == INT64_MAX
-# define MI_INTPTR_SHIFT (3)
-#elif INTPTR_MAX == INT32_MAX
-# define MI_INTPTR_SHIFT (2)
-#else
-#error platform pointers must be 32, 64, or 128 bits
-#endif
+// TODO
+const MI_INTPTR_SIZE: u64 = 8;
+const MI_INTPTR_BITS: u64 = MI_INTPTR_SIZE * 8;
+const MI_SIZE_SIZE: u64 = 8;
+const MI_SIZE_BITS: u64 = MI_INTPTR_SIZE * 8;
 
-#if SIZE_MAX == UINT64_MAX
-# define MI_SIZE_SHIFT (3)
-typedef int64_t  mi_ssize_t;
-#elif SIZE_MAX == UINT32_MAX
-# define MI_SIZE_SHIFT (2)
-typedef int32_t  mi_ssize_t;
-#else
-#error platform objects must be 32 or 64 bits
-#endif
-
-#if (SIZE_MAX/2) > LONG_MAX
-# define MI_ZU(x)  x##ULL
-# define MI_ZI(x)  x##LL
-#else
-# define MI_ZU(x)  x##UL
-# define MI_ZI(x)  x##L
-#endif
-
-#define MI_INTPTR_SIZE  (1<<MI_INTPTR_SHIFT)
-#define MI_INTPTR_BITS  (MI_INTPTR_SIZE*8)
-
-#define MI_SIZE_SIZE  (1<<MI_SIZE_SHIFT)
-#define MI_SIZE_BITS  (MI_SIZE_SIZE*8)
-
-#define MI_KiB     (MI_ZU(1024))
-#define MI_MiB     (MI_KiB*MI_KiB)
-#define MI_GiB     (MI_MiB*MI_KiB)
+// #define MI_KiB     (MI_ZU(1024))
+// #define MI_MiB     (MI_KiB*MI_KiB)
+// #define MI_GiB     (MI_MiB*MI_KiB)
 
 
 // ------------------------------------------------------
