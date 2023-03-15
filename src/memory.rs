@@ -4,7 +4,7 @@ use std::ops::Deref;
 use std::slice::{from_raw_parts, from_raw_parts_mut};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use derive_more::Display;
-use num_traits::{int::PrimInt, sign::Unsigned};
+use num_traits::{int::PrimInt, sign::{Signed, Unsigned}};
 
 #[derive(new)]
 #[derive(Display)]
@@ -30,6 +30,7 @@ impl Atomic<u64> for AtomicU64 {
 pub trait Memory {
     type Address: PrimInt + Unsigned;
     type Size: PrimInt + Unsigned;
+    type PtrDiff: PrimInt + Signed;
     // TODO: Remove atomics, if not multithreaded.
     type AtomicAddress: Atomic<Self::Address>;
     type AtomicSize: Atomic<Self::Size>;

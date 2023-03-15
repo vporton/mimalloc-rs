@@ -8,6 +8,7 @@ pub const WASM_PAGE_SIZE_IN_BYTES: usize = 64 * 1024; // 64KB
 impl Memory for dyn StableMemory {
     type Address = u64;
     type Size = u64;
+    type PtrDiff = i64;
     type AtomicAddress = AtomicU64;
     type AtomicSize = AtomicU64;
 
