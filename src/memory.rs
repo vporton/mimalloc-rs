@@ -163,40 +163,40 @@ impl<T, MR: Deref> TypedPointer<T, MR>
 
 /// `write_field!(pointer=>field, value)`
 macro_rules! write_field {
-    ($pointer:expr=>$field:ident,$value:expr) => {
+    ($pointer:expr,$s:ident=>$field:ident,$value:expr) => {
         {
             use offset::offset_of;
-            $mem.write_value($pointer.byte_address() + offset_of!(<$addr::Type>::$field).as_u32() as usize, $value)
+            $pointer.memory.write_value($pointer.byte_address() + offset_of!($s::$field).as_u32() as usize, $value)
         }
     };
 }
 
 /// `read_field!(pointer=>field, pointer)`
 macro_rules! read_field {
-    ($pointer:expr=>$field:ident,$to:expr) => {
+    ($pointer:expr,$s:ident=>$field:ident,$to:expr) => {
         {
             use offset::offset_of;
-            $pointer.read_value($pointer.byte_address() + offset_of!(<$addr::Type>::$field).as_u32() as usize, $to)
+            $pointer.memory.read_value($pointer.byte_address() + offset_of!($s::$field).as_u32() as usize, $to)
         }
     };
 }
 
 /// `return_field!(pointer=>field)`
 macro_rules! return_field {
-    ($pointer:expr=>$field:ident) => {
+    ($pointer:expr,$s:ident=>$field:ident) => {
         {
             use offset::offset_of;
-            $pointer.return_value($pointer.byte_address() + offset_of!(<$pointer::Type>::$field).as_u32() as usize)
+            $pointer.memory.return_value($pointer.byte_address() + offset_of!($s::$field).as_u32() as usize)
         }
     };
 }
 
 /// `update_field!(pointer=>field, update)`
 macro_rules! update_field {
-    ($pointer:expr=>$field:ident,$update:expr) => {
+    ($pointer:expr,$s:ident=>$field:ident,$update:expr) => {
         {
             use offset::offset_of;
-            $pointer.update_value($pointer.byte_address() + offset_of!(<$pointer::Type>::$field).as_u32() as usize, update)
+            $pointer.memory.update_value($pointer.byte_address() + offset_of!($s::$field).as_u32() as usize, update)
         }
     };
 }

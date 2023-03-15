@@ -20,10 +20,10 @@ use crate::memory::return_field;
 pub fn _mi_page_malloc<MR: Deref>(memory: MR, heap: TypedAddress<mi_heap_t>, page: TypedAddress<mi_page_t>, size: u64, zero: bool) -> Address
   where MR::Target: MemoryExt
 {
-  let heap = TypedPointer::new(memory, heap);
-  let page = TypedPointer::new(memory, page);
+  let heap = TypedPointer::new(&*memory, heap);
+  let page = TypedPointer::new(&*memory, page);
   mi_assert_internal!(return_field!(page=>xblock_size)==0 || mi_page_block_size(page) >= size);
-  let block = return_field!(page=>free);
+  let block = return_field!(page,mi_page_t=>free);
   if mi_unlikely(block == null) {
     return _mi_malloc_generic(heap, size, zero, 0);
   }
@@ -42,10 +42,10 @@ pub fn _mi_page_malloc<MR: Deref>(memory: MR, heap: TypedAddress<mi_heap_t>, pag
   // zero the block? note: we need to zero the full block size (issue #63)
   if mi_unlikely(zero) {
     mi_assert_internal!(return_field!(page=>xblock_size) != 0); // do not call with zero'ing for huge blocks (see _mi_malloc_generic)
-    let zsize: u64 = if return_field!(page=>is_zero) {
+    let zsize: u64 = if return_field!(page,mi_page_t=>is_zero) {
       size_of::<mi_block_t::mi_encoded_t>() + MI_PADDING_SIZE
     } else {
-      return_field!(page=>xblock_size)
+      return_field!(page,mi_page_t=>xblock_size)
     };
     _mi_memzero_aligned(block, zsize - MI_PADDING_SIZE);
   }
@@ -143,7 +143,7 @@ fn _mi_heap_malloc_zero_ex(heap: TypedPointer<mi_heap_t>, size: u64, zero: bool,
     return mi_heap_malloc_small_zero(heap, size, zero);
   } else {
     mi_assert!(heap!=null);
-    let thread_id = return_field!(heap=>thread_id);
+    let thread_id = return_field!(heap,mi_heap_t=>thread_id);
     mi_assert(thread_id == 0 || thread_id == _mi_thread_id());   // heaps are thread local
     let p: Address = _mi_malloc_generic(heap, size + MI_PADDING_SIZE, zero, huge_alignment);  // note: size can overflow but it is detected in malloc_generic
     mi_assert_internal!(p == null || mi_usable_size(p) >= size);
@@ -444,7 +444,7 @@ fn _mi_free_block_mt<MR: Deref>(memory: MR, page: TypedAddress<mi_page_t>, block
   // huge page segments are always abandoned and can be freed immediately
   let page2 = TypedPointer::new(memory, page);
   let segment: TypedPointer<mi_segment_t> = _mi_page_segment(page2);
-  if return_field!(segment=>kind) == MI_SEGMENT_HUGE {
+  if return_field!(segment,mi_segment_t=>kind) == MI_SEGMENT_HUGE {
     #[cfg(mi_huge_page_abandon)]
     {
       // huge page segments are always abandoned and can be freed immediately
@@ -470,7 +470,7 @@ fn _mi_free_block_mt<MR: Deref>(memory: MR, page: TypedAddress<mi_page_t>, block
   // Try to put the block on either the page-local thread free list, or the heap delayed free list.
   let mut tfreex: mi_thread_free_t;
   let mut use_delayed: bool;
-  let tfree: mi_thread_free_t = mi_atomic_load_relaxed(&return_field!(page2=>xthread_free));
+  let tfree: mi_thread_free_t = mi_atomic_load_relaxed(&return_field!(page2,mi_page_t=>xthread_free));
   loop {
     use_delayed = mi_tf_delayed(tfree) == MI_USE_DELAYED_FREE;
     if mi_unlikely(use_delayed) {
@@ -482,20 +482,20 @@ fn _mi_free_block_mt<MR: Deref>(memory: MR, page: TypedAddress<mi_page_t>, block
       tfreex = mi_tf_set_block(tfree, block);
     }
     // TODO: Can we use the previous value of `return_field!(page=>xthread_free)`?
-    if mi_atomic_cas_weak_release(&return_field!(page2=>xthread_free), &mut tfree, tfreex) {
+    if mi_atomic_cas_weak_release(&return_field!(page2,mi_page_t=>xthread_free), &mut tfree, tfreex) {
       break;
     }
   }
 
   if mi_unlikely(use_delayed) {
     // racy read on `heap`, but ok because MI_DELAYED_FREEING is set (see `mi_heap_delete` and `mi_heap_collect_abandon`)
-    let heap: TypedPointer<mi_heap_t> = TypedPointer::from_address(mi_atomic_load_acquire(&return_field!(page=>xheap))); //mi_page_heap(page);
+    let heap: TypedPointer<mi_heap_t> = TypedPointer::from_address(mi_atomic_load_acquire(&return_field!(page,mi_page_t=>xheap))); //mi_page_heap(page);
     mi_assert_internal!(heap != NULL);
     if heap != null {
       // add to the delayed free list of this heap. (do this atomically as the lock only protects heap memory validity)
-      let dfree: TypedPointer<mi_block_t> = mi_atomic_load_ptr_relaxed(mi_block_t, &return_field!(page2=>thread_delayed_free));
+      let dfree: TypedPointer<mi_block_t> = mi_atomic_load_ptr_relaxed(mi_block_t, &return_field!(page2,mi_page_t=>thread_delayed_free));
       loop {
-        mi_block_set_nextx(memory, heap.address, block, dfree, return_field!(heap=>keys));
+        mi_block_set_nextx(memory, heap.address, block, dfree, return_field!(heap,mi_heap_t=>keys));
         if mi_atomic_cas_ptr_weak_release!(mi_block_t, &return_field!(heap=>thread_delayed_free), &dfree, block) {
           break;
         }
@@ -504,13 +504,13 @@ fn _mi_free_block_mt<MR: Deref>(memory: MR, page: TypedAddress<mi_page_t>, block
 
     // and reset the MI_DELAYED_FREEING flag
     // TODO: Can we use the previous value of `return_field!(page=>xthread_free)`?
-    tfree = mi_atomic_load_relaxed(&return_field!(page2=>xthread_free));
+    tfree = mi_atomic_load_relaxed(&return_field!(page2,mi_page_t=>xthread_free));
     loop {
       tfreex = tfree;
       mi_assert_internal!(mi_tf_delayed(tfree) == MI_DELAYED_FREEING);
       tfreex = mi_tf_set_delayed(tfree, MI_NO_DELAYED_FREE);
       // TODO: Can we use the previous value of `return_field!(page=>xthread_free)`?
-      if mi_atomic_cas_weak_release(&return_field!(page2=>xthread_free), &tfree, tfreex) {
+      if mi_atomic_cas_weak_release(&return_field!(page2,mi_page_t=>xthread_free), &tfree, tfreex) {
         break;
       }
     }
@@ -592,7 +592,7 @@ fn mi_checked_ptr_segment(p: Pointer, msg: &str) -> TypedPointer<mi_segment_t>
   let segment: TypedPointer<mi_segment_t> = _mi_ptr_segment(p);
   mi_assert_internal!(segment != null);
 
-  let cookie = return_field!(segment=>cookie);
+  let cookie = return_field!(segment,mi_segment_t=>cookie);
   #[cfg(mi_debug)]
   if mi_unlikely(!mi_is_in_heap_region(p)) {
     if !(MI_INTPTR_SIZE == 8 && cfg!(target_os = "linux")) ||
@@ -621,11 +621,11 @@ fn mi_free(p: Pointer) {
     return;
   }
   let segment: TypedPointer<mi_segment_t> = mi_checked_ptr_segment(p,"mi_free");
-  let is_local= _mi_thread_id() == mi_atomic_load_relaxed(&read_value!(segment=>thread_id));
+  let is_local= _mi_thread_id() == mi_atomic_load_relaxed(&return_field!(segment,mi_segment_t=>thread_id));
   let page: TypedPointer<mi_page_t> = _mi_segment_page_of(segment, p);
 
   if mi_likely(is_local) {                       // thread-local free?
-    if mi_likely(return_field!(page=>flags).full_aligned == 0)  // and it is not a full page (full pages need to move from the full bin), nor has aligned blocks (aligned blocks need to be unaligned)
+    if mi_likely(return_field!(page,mi_page_t=>flags).full_aligned == 0)  // and it is not a full page (full pages need to move from the full bin), nor has aligned blocks (aligned blocks need to be unaligned)
     {
       let block: TypedPointer<mi_block_t> = TypedPointer::from_address(p);
       if mi_unlikely(mi_check_is_double_free(p.memory, page.address, block.address)) {
@@ -638,9 +638,9 @@ fn mi_free(p: Pointer) {
         write_value!(block.byte_address() + i, MI_DEBUG_FREED);
       }
       mi_track_free(p);
-      mi_block_set_next(p.memory, page.address, block.address, return_field!(page=>local_free));
+      mi_block_set_next(p.memory, page.address, block.address, return_field!(page,mi_page_t=>local_free));
       write_value!(page=>local_free, block);
-      let used = return_field!(page=>used);
+      let used = return_field!(page,mi_page_t=>used);
       --used;
       write_value!(page=>used, used);
       if mi_unlikely(used == 0) {   // using this expression generates better code than: page->used--; if (mi_page_all_free(page))
