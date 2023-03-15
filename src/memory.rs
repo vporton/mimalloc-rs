@@ -40,12 +40,11 @@ pub trait Memory {
     fn read(&self, offset: Self::Address, buf: &mut [u8]);
 }
 
-// #[derive(Clone, Copy)]
-// pub struct Address(pub u64);
-
 trait Typed {
     type Type;
 }
+
+// TODO: TypedAtomicAddress, AtomicPointer, TypedAtomicPointer
 
 pub struct TypedAddress<M: Memory + ?Sized, T>{
     inner: M::Address,
