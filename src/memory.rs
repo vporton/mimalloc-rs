@@ -2,6 +2,7 @@ use std::marker::PhantomData;
 use std::mem::{MaybeUninit, size_of};
 use std::ops::Deref;
 use std::slice::{from_raw_parts, from_raw_parts_mut};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use derive_more::Display;
 use num_traits::{int::PrimInt, sign::Unsigned};
 
@@ -10,11 +11,30 @@ use num_traits::{int::PrimInt, sign::Unsigned};
 #[display(fmt = "Memory allocation error.")]
 pub struct AllocationError;
 
+pub trait Atomic<T>: From<T> {
+    fn load(&self, order: Ordering) -> T;
+}
+
+impl Atomic<u32> for AtomicU32 {
+    fn load(&self, order: Ordering) -> u32 {
+        Self::load(self, order)
+    }
+}
+
+impl Atomic<u64> for AtomicU64 {
+    fn load(&self, order: Ordering) -> u64 {
+        Self::load(self, order)
+    }
+}
+
 pub trait Memory {
     type Address: PrimInt + Unsigned;
     type Size: PrimInt + Unsigned;
-    fn size_in_pages(&self) -> u64;
-    fn grow(&self, new_pages: u64) -> Result<u64, AllocationError>;
+    // TODO: Remove atomics, if not multithreaded.
+    type AtomicAddress: Atomic<Self::Address>;
+    type AtomicSize: Atomic<Self::Size>;
+    fn size_in_pages(&self) -> Self::Size;
+    fn grow(&self, new_pages: Self::Size) -> Result<Self::Size, AllocationError>;
     fn write(&self, offset: Self::Address, buf: &[u8]);
     fn read(&self, offset: Self::Address, buf: &mut [u8]);
 }

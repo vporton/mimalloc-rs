@@ -6,6 +6,7 @@ terms of the MIT license. A copy of the license can be found in the file
 -----------------------------------------------------------------------------*/
 
 use std::mem::size_of;
+use std::sync::atomic::AtomicU64;
 use c2rust_bitfields::BitfieldStruct;
 
 // Minimal alignment necessary. On most platforms 16 bytes are needed
@@ -120,7 +121,7 @@ enum mi_delayed_t {
 
 // Thread free list.
 // We use the bottom 2 bits of the pointer for mi_delayed_t flags
-type mi_thread_free_t = u64;
+type mi_thread_free_t = AtomicU64; // FIXME: generic type
 
 // A page contains blocks of one specific size (`block_size`).
 // Each page has three list of free blocks:
@@ -185,31 +186,32 @@ struct mi_page_t {
   keys: [u64; 2],           // two random keys to encode the free lists (see `_mi_block_next`)
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-  _Atomic(mi_thread_free_t) xthread_free;  // list of deferred free blocks freed by other threads
-  _Atomic(uintptr_t)        xheap;
+  xthread_free: mi_thread_free_t,  // list of deferred free blocks freed by other threads
+  xheap: AtomicU64, // FIXME: `AtomicAddress`
 
-  struct mi_page_s*     next;              // next page owned by this thread with the same `block_size`
-  struct mi_page_s*     prev;              // previous page owned by this thread with the same `block_size`
+  next: TypedPointer<mi_page_s>,              // next page owned by this thread with the same `block_size`
+  prev: TypedPointer<mi_page_s>,              // previous page owned by this thread with the same `block_size`
 
+  // FIXME
   // 64-bit 9 words, 32-bit 12 words, (+2 for secure)
-  #if MI_INTPTR_SIZE==8
-  uintptr_t padding[1];
-  #endif
-} ;
+  // #if MI_INTPTR_SIZE==8
+  // uintptr_t padding[1];
+  // #endif
+}
 
 
 
-typedef enum mi_page_kind_e {
+enum mi_page_kind_t {
   MI_PAGE_SMALL,    // small blocks go into 64KiB pages inside a segment
   MI_PAGE_MEDIUM,   // medium blocks go into medium pages inside a segment
   MI_PAGE_LARGE,    // larger blocks go into a page of just one block
   MI_PAGE_HUGE,     // huge blocks (> 16 MiB) are put into a single page in a single segment.
-} mi_page_kind_t;
+}
 
-typedef enum mi_segment_kind_e {
+enum mi_segment_kind_t {
   MI_SEGMENT_NORMAL, // MI_SEGMENT_SIZE size with pages inside.
   MI_SEGMENT_HUGE,   // > MI_LARGE_SIZE_MAX segment with just one huge page inside.
-} mi_segment_kind_t;
+}
 
 // ------------------------------------------------------
 // A segment holds a commit mask where a bit is set if
@@ -223,22 +225,22 @@ typedef enum mi_segment_kind_e {
 // is still tracked in fine-grained MI_COMMIT_SIZE chunks)
 // ------------------------------------------------------
 
-#define MI_MINIMAL_COMMIT_SIZE      (16*MI_SEGMENT_SLICE_SIZE)           // 1MiB
-#define MI_COMMIT_SIZE              (MI_SEGMENT_SLICE_SIZE)              // 64KiB
-#define MI_COMMIT_MASK_BITS         (MI_SEGMENT_SIZE / MI_COMMIT_SIZE)  
-#define MI_COMMIT_MASK_FIELD_BITS    MI_SIZE_BITS
-#define MI_COMMIT_MASK_FIELD_COUNT  (MI_COMMIT_MASK_BITS / MI_COMMIT_MASK_FIELD_BITS)
+const MI_MINIMAL_COMMIT_SIZE: u64 = 16*MI_SEGMENT_SLICE_SIZE;           // 1MiB
+const MI_COMMIT_SIZE: u64 = MI_SEGMENT_SLICE_SIZE;              // 64KiB
+const MI_COMMIT_MASK_BITS: u64 = MI_SEGMENT_SIZE / MI_COMMIT_SIZE;
+const MI_COMMIT_MASK_FIELD_BITS: u64 = MI_SIZE_BITS;
+const MI_COMMIT_MASK_FIELD_COUNT: u64 = MI_COMMIT_MASK_BITS / MI_COMMIT_MASK_FIELD_BITS;
 
-#if (MI_COMMIT_MASK_BITS != (MI_COMMIT_MASK_FIELD_COUNT * MI_COMMIT_MASK_FIELD_BITS))
-#error "the segment size must be exactly divisible by the (commit size * size_t bits)"
-#endif
+const _unused2: () = if MI_COMMIT_MASK_BITS != (MI_COMMIT_MASK_FIELD_COUNT * MI_COMMIT_MASK_FIELD_BITS) {
+  compile_error!("the segment size must be exactly divisible by the (commit size * size_t bits)")
+};
 
-typedef struct mi_commit_mask_s {
-  size_t mask[MI_COMMIT_MASK_FIELD_COUNT];
-} mi_commit_mask_t;
+struct mi_commit_mask_t {
+  mask: [u64; MI_COMMIT_MASK_FIELD_COUNT],
+}
 
-typedef mi_page_t  mi_slice_t;
-typedef int64_t    mi_msecs_t;
+type mi_slice_t = mi_page_t;
+type mi_msecs_t = int64_t;
 
 
 // Segments are large allocated memory blocks (8mb on 64 bit) from

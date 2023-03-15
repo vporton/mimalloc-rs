@@ -1,4 +1,5 @@
 use std::ops::Deref;
+use std::sync::atomic::AtomicU64;
 use ic_cdk::api::stable::{CanisterStableMemory, StableMemory};
 use crate::memory::{AllocationError, Memory, PagedMemory};
 
@@ -7,6 +8,8 @@ pub const WASM_PAGE_SIZE_IN_BYTES: usize = 64 * 1024; // 64KB
 impl Memory for dyn StableMemory {
     type Address = u64;
     type Size = u64;
+    type AtomicAddress = AtomicU64;
+    type AtomicSize = AtomicU64;
 
     fn size_in_pages(&self) -> Self::Size {
         <Self as StableMemory>::stable64_size(self)
