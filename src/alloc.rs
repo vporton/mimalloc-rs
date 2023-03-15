@@ -12,7 +12,7 @@ terms of the MIT license. A copy of the license can be found in the file
 use std::mem::size_of;
 use std::ops::Deref;
 use std::ptr::null;
-use crate::memory::return_field;
+use crate::memory::{return_field, write_field};
 
 // Fast allocation in a page: just pop from the free list.
 // Fall back to generic allocation only if the list is empty.
@@ -31,7 +31,7 @@ pub fn _mi_page_malloc<MR: Deref>(memory: MR, heap: TypedAddress<mi_heap_t>, pag
   // pop from the free list
   update_field!(page=>used, |x| x+1);
   let free = mi_block_next(page, block);
-  write_field!(page=>free, free);
+  write_field!(page,mi_page_t=>free, free);
   mi_assert_internal(free == null || _mi_ptr_page(free) == page);
 
   // allow use of the block internally
@@ -642,7 +642,7 @@ fn mi_free(p: Pointer) {
       write_value!(page=>local_free, block);
       let used = return_field!(page,mi_page_t=>used);
       --used;
-      write_value!(page=>used, used);
+      write_field!(page,mi_page_t=>used, used);
       if mi_unlikely(used == 0) {   // using this expression generates better code than: page->used--; if (mi_page_all_free(page))
         _mi_page_retire(page);
       }
