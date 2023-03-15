@@ -53,8 +53,7 @@ impl<M: Memory + ?Sized, T> Clone for TypedAddress<M, T>
     }
 }
 
-impl<M: Memory + ?Sized, T> Copy for TypedAddress<M, T>
-{}
+impl<M: Memory + ?Sized, T> Copy for TypedAddress<M, T> {}
 
 impl<M: Memory + ?Sized, T> Typed for TypedAddress<M, T> {
     type Type = T;
