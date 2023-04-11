@@ -308,7 +308,7 @@ typedef struct mi_page_queue_s {
 const MI_BIN_FULL: u64 = MI_BIN_HUGE+1;
 
 // Random context
-typedef struct mi_random_cxt_t {
+struct mi_random_cxt_t {
   input: [u32; 16],
   output: [u32; 16],
   output_available: i64, // FIXME: Which type?
@@ -317,38 +317,40 @@ typedef struct mi_random_cxt_t {
 
 
 // In debug mode there is a padding structure at the end of the blocks to check for buffer overflows
-#if (MI_PADDING)
-typedef struct mi_padding_s {
-  uint32_t canary; // encoded block value to check validity of the padding (in case of overflow)
-  uint32_t delta;  // padding bytes before the block. (mi_usable_size(p) - delta == exact allocated bytes)
-} mi_padding_t;
-#define MI_PADDING_SIZE   (sizeof(mi_padding_t))
-#define MI_PADDING_WSIZE  ((MI_PADDING_SIZE + MI_INTPTR_SIZE - 1) / MI_INTPTR_SIZE)
-#else
-#define MI_PADDING_SIZE   0
-#define MI_PADDING_WSIZE  0
-#endif
+#[cfg(mi_padding)]
+struct mi_padding_t {
+  canary: u32, // encoded block value to check validity of the padding (in case of overflow)
+  delta: u32,  // padding bytes before the block. (mi_usable_size(p) - delta == exact allocated bytes)
+}
+#[cfg(mi_padding)]
+const MI_PADDING_SIZE: usize = size_of::<mi_padding_t>();
+#[cfg(mi_padding)]
+const MI_PADDING_WSIZE: usize = (MI_PADDING_SIZE + MI_INTPTR_SIZE - 1) / MI_INTPTR_SIZE;
 
-#define MI_PAGES_DIRECT   (MI_SMALL_WSIZE_MAX + MI_PADDING_WSIZE + 1)
+#[cfg(not(mi_padding))]
+const MI_PADDING_SIZE: usize = 0;
+#[cfg(not(mi_padding))]
+const MI_PADDING_WSIZE: usize = 0;
 
+const MI_PAGES_DIRECT: usize = MI_SMALL_WSIZE_MAX + MI_PADDING_WSIZE + 1;
 
 // A heap owns a set of pages.
-struct mi_heap_s {
-  mi_tld_t*             tld;
-  mi_page_t*            pages_free_direct[MI_PAGES_DIRECT];  // optimize: array where every entry points a page with possibly free blocks in the corresponding queue for that size.
-  mi_page_queue_t       pages[MI_BIN_FULL + 1];              // queue of pages for each size class (or "bin")
-  _Atomic(mi_block_t*)  thread_delayed_free;
-  mi_threadid_t         thread_id;                           // thread this heap belongs too
-  mi_arena_id_t         arena_id;                            // arena id if the heap belongs to a specific arena (or 0)  
-  uintptr_t             cookie;                              // random cookie to verify pointers (see `_mi_ptr_cookie`)
-  uintptr_t             keys[2];                             // two random keys used to encode the `thread_delayed_free` list
-  mi_random_ctx_t       random;                              // random number context used for secure allocation
-  size_t                page_count;                          // total number of pages in the `pages` queues.
-  size_t                page_retired_min;                    // smallest retired index (retired pages are fully free, but still in the page queues)
-  size_t                page_retired_max;                    // largest retired index into the `pages` array.
-  mi_heap_t*            next;                                // list of heaps per thread
-  bool                  no_reclaim;                          // `true` if this heap should not reclaim abandoned pages
-};
+struct mi_heap_t {
+  tld: TypedAddress<mi_tld_t>,
+  pages_free_direct: [TypedAddress<mi_page_t>; MI_PAGES_DIRECT],  // optimize: array where every entry points a page with possibly free blocks in the corresponding queue for that size.
+  pages: [mi_page_queue_t; MI_BIN_FULL + 1],              // queue of pages for each size class (or "bin")
+  thread_delayed_free: TypedAtomicAddress<mi_block_t>,
+  thread_id: mi_threadid_t,                           // thread this heap belongs too
+  arena_id: mi_arena_id_t,                            // arena id if the heap belongs to a specific arena (or 0)
+  cookie: Address,                              // random cookie to verify pointers (see `_mi_ptr_cookie`)
+  keys: [Address; 2],                             // two random keys used to encode the `thread_delayed_free` list
+  random: mi_random_ctx_t,                              // random number context used for secure allocation
+  page_count: Size,                          // total number of pages in the `pages` queues.
+  page_retired_min: Size,                    // smallest retired index (retired pages are fully free, but still in the page queues)
+  page_retired_max: Size,                    // largest retired index into the `pages` array.
+  next: TypedAddress<mi_heap_t>,                                // list of heaps per thread
+  no_reclaim: bool,                          // `true` if this heap should not reclaim abandoned pages
+}
 
 
 
